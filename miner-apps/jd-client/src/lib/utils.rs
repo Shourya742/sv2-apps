@@ -22,14 +22,24 @@ use std::{
 use stratum_apps::{
     stratum_core::{
         binary_sv2::Str0255,
+        channels_sv2::client,
         common_messages_sv2::{Protocol, SetupConnection},
-        mining_sv2::{CloseChannel, OpenExtendedMiningChannel, OpenStandardMiningChannel},
-        parsers_sv2::Mining,
+        job_declaration_sv2::PushSolution,
+        mining_sv2::{
+            CloseChannel, OpenExtendedMiningChannel, OpenStandardMiningChannel,
+            SubmitSharesExtended,
+        },
+        parsers_sv2::{JobDeclaration, Mining},
     },
     utils::types::{ChannelId, DownstreamId, Hashrate, JobId},
 };
+use tracing::{debug, info};
 
-use crate::{config::ConfigJDCMode, error::JDCError};
+use crate::{
+    channel_manager::{downstream_message_handler::RouteMessageTo, ChannelManagerData},
+    config::ConfigJDCMode,
+    error::JDCError,
+};
 
 /// Represents a message that can trigger shutdown of various system components.
 #[derive(Debug, Clone)]
@@ -300,6 +310,75 @@ impl From<(DownstreamId, ChannelId, JobId)> for DownstreamChannelJobId {
             downstream_id: value.0,
             channel_id: value.1,
             job_id: value.2,
+        }
+    }
+}
+
+pub fn validate_share(
+    mut upstream_message: SubmitSharesExtended<'static>,
+    channel_manager_data: &mut ChannelManagerData,
+    messages: &mut Vec<RouteMessageTo>,
+) {
+    let Some(upstream_channel) = channel_manager_data.upstream_channel.as_mut() else {
+        return;
+    };
+    let Some(prev_hash) = channel_manager_data.last_new_prev_hash.as_ref() else {
+        return;
+    };
+
+    match upstream_channel.validate_share(upstream_message.clone()) {
+        Ok(client::share_accounting::ShareValidationResult::Valid(share_hash)) => {
+            upstream_message.sequence_number = channel_manager_data
+                .sequence_number_factory
+                .fetch_add(1, Ordering::Relaxed);
+
+            info!(
+                "Flushed cached extended share: valid | ch={}, seq={}, hash={} ✅",
+                upstream_message.channel_id, upstream_message.sequence_number, share_hash
+            );
+
+            messages.push(Mining::SubmitSharesExtended(upstream_message.into_static()).into());
+        }
+
+        Ok(client::share_accounting::ShareValidationResult::BlockFound(share_hash)) => {
+            upstream_message.sequence_number = channel_manager_data
+                .sequence_number_factory
+                .fetch_add(1, Ordering::Relaxed);
+
+            info!("💰 Block Found (cached extended)!!! 💰 {share_hash}");
+
+            let mut channel_extranonce = upstream_channel.get_extranonce_prefix().to_vec();
+            channel_extranonce.extend_from_slice(&upstream_message.extranonce.to_vec());
+
+            let push_solution = PushSolution {
+                extranonce: channel_extranonce.try_into().expect("extranonce"),
+                ntime: upstream_message.ntime,
+                nonce: upstream_message.nonce,
+                version: upstream_message.version,
+                nbits: prev_hash.n_bits,
+                prev_hash: prev_hash.prev_hash.clone(),
+            };
+
+            messages.push(JobDeclaration::PushSolution(push_solution).into());
+            messages.push(Mining::SubmitSharesExtended(upstream_message.into_static()).into());
+        }
+
+        Err(err) => {
+            let code = match err {
+                client::share_accounting::ShareValidationError::Invalid => "invalid-share",
+                client::share_accounting::ShareValidationError::Stale => "stale-share",
+                client::share_accounting::ShareValidationError::InvalidJobId => "invalid-job-id",
+                client::share_accounting::ShareValidationError::DoesNotMeetTarget => {
+                    "difficulty-too-low"
+                }
+                client::share_accounting::ShareValidationError::DuplicateShare => "duplicate-share",
+                _ => unreachable!(),
+            };
+
+            debug!(
+                "❌ Cached extended share rejected: ch={}, seq={}, error={}",
+                upstream_message.channel_id, upstream_message.sequence_number, code
+            );
         }
     }
 }
