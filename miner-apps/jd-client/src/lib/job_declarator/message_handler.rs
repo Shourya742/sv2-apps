@@ -8,6 +8,7 @@ use stratum_apps::stratum_core::{
 use tracing::{info, warn};
 
 use crate::{
+    config::ConfigJDCMode,
     error::JDCError,
     jd_mode::{set_jd_mode, JdMode},
     job_declarator::JobDeclarator,
@@ -31,17 +32,14 @@ impl HandleCommonMessagesFromServerAsync for JobDeclarator {
         _tlv_fields: Option<&[Tlv]>,
     ) -> Result<(), Self::Error> {
         info!("Received: {}", msg);
-
-        let jd_mode = match msg.flags {
-            0 => JdMode::CoinbaseOnly,
-            1 => JdMode::FullTemplate,
-            _ => JdMode::SoloMining,
+        // Setting up JDMode from config, upon
+        // successful handshake.
+        let jd_mode = match self.mode {
+            ConfigJDCMode::CoinbaseOnly => JdMode::CoinbaseOnly,
+            ConfigJDCMode::FullTemplate => JdMode::FullTemplate,
         };
-        set_jd_mode(jd_mode);
 
-        if jd_mode == JdMode::SoloMining {
-            return Err(JDCError::Shutdown);
-        }
+        set_jd_mode(jd_mode);
 
         Ok(())
     }
