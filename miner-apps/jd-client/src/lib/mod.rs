@@ -2,6 +2,7 @@ use std::{net::SocketAddr, sync::Arc, thread::JoinHandle, time::Duration};
 
 use async_channel::{unbounded, Receiver, Sender};
 use bitcoin_core_sv2::CancellationToken;
+use postage::{sink::Sink, stream::Stream};
 use stratum_apps::{
     key_utils::Secp256k1PublicKey,
     stratum_core::{bitcoin::consensus::Encodable, parsers_sv2::JobDeclaration},
@@ -44,14 +45,14 @@ pub mod utils;
 #[derive(Clone)]
 pub struct JobDeclaratorClient {
     config: JobDeclaratorClientConfig,
-    notify_shutdown: broadcast::Sender<ShutdownMessage>,
+    notify_shutdown: postage::broadcast::Sender<ShutdownMessage>,
 }
 
 #[cfg_attr(not(test), hotpath::measure_all)]
 impl JobDeclaratorClient {
     /// Creates a new [`JobDeclaratorClient`] instance.
     pub fn new(config: JobDeclaratorClientConfig) -> Self {
-        let (notify_shutdown, _) = tokio::sync::broadcast::channel::<ShutdownMessage>(100);
+        let (notify_shutdown, _) = postage::broadcast::channel::<ShutdownMessage>(100);
         Self {
             config,
             notify_shutdown,
@@ -132,9 +133,9 @@ impl JobDeclaratorClient {
             let shutdown_signal = async move {
                 loop {
                     match notify_shutdown_monitoring.recv().await {
-                        Ok(ShutdownMessage::ShutdownAll) => break,
-                        Ok(_) => continue, // Ignore other shutdown messages
-                        Err(_) => break,
+                        Some(ShutdownMessage::ShutdownAll) => break,
+                        Some(_) => continue, // Ignore other shutdown messages
+                        None => break,
                     }
                 }
             };
@@ -316,13 +317,13 @@ impl JobDeclaratorClient {
             .await;
 
         info!("Spawning status listener task...");
-        let notify_shutdown_clone = notify_shutdown.clone();
+        let mut notify_shutdown_clone = notify_shutdown.clone();
 
         loop {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {
                     info!("Ctrl+C received — initiating graceful shutdown...");
-                    let _ = notify_shutdown_clone.send(ShutdownMessage::ShutdownAll);
+                    let _ = notify_shutdown_clone.send(ShutdownMessage::ShutdownAll).await;
                     break;
                 }
                 message = status_receiver.recv() => {
@@ -330,22 +331,22 @@ impl JobDeclaratorClient {
                         match status.state {
                             State::DownstreamShutdown{downstream_id,..} => {
                                 warn!("Downstream {downstream_id:?} disconnected — Channel manager.");
-                                let _ = notify_shutdown_clone.send(ShutdownMessage::DownstreamShutdown(downstream_id));
+                                let _ = notify_shutdown_clone.send(ShutdownMessage::DownstreamShutdown(downstream_id)).await;
                             }
                             State::TemplateReceiverShutdown(_) => {
                                 warn!("Template Receiver shutdown requested — initiating full shutdown.");
-                                let _ = notify_shutdown_clone.send(ShutdownMessage::ShutdownAll);
+                                let _ = notify_shutdown_clone.send(ShutdownMessage::ShutdownAll).await;
                                 break;
                             }
                             State::ChannelManagerShutdown(_) => {
                                 warn!("Channel Manager shutdown requested — initiating full shutdown.");
-                                let _ = notify_shutdown_clone.send(ShutdownMessage::ShutdownAll);
+                                let _ = notify_shutdown_clone.send(ShutdownMessage::ShutdownAll).await;
                                 break;
                             }
                             State::UpstreamShutdownFallback(_) | State::JobDeclaratorShutdownFallback(_) => {
                                 warn!("Upstream/Job Declarator connection dropped — attempting reconnection...");
                                 let (tx, mut rx) = mpsc::channel::<()>(1);
-                                let _ = notify_shutdown_clone.send(ShutdownMessage::UpstreamShutdownFallback((encoded_outputs.clone(), tx)));
+                                let _ = notify_shutdown_clone.send(ShutdownMessage::UpstreamShutdownFallback((encoded_outputs.clone(), tx))).await;
                                 set_jd_mode(JdMode::SoloMining);
                                 shutdown_complete_rx.recv().await;
                                 tracing::error!("Existing Upstream or JD instance taken out");
@@ -452,7 +453,7 @@ impl JobDeclaratorClient {
         upstream_to_channel_manager_sender: Sender<Sv2Frame>,
         channel_manager_to_jd_receiver: Receiver<JobDeclaration<'static>>,
         jd_to_channel_manager_sender: Sender<JobDeclaration<'static>>,
-        notify_shutdown: broadcast::Sender<ShutdownMessage>,
+        mut notify_shutdown: postage::broadcast::Sender<ShutdownMessage>,
         status_sender: Sender<Status>,
         mode: ConfigJDCMode,
         task_manager: Arc<TaskManager>,
@@ -499,7 +500,9 @@ impl JobDeclaratorClient {
                     }
                     Err(e) => {
                         let (tx, mut rx) = mpsc::channel::<()>(1);
-                        let _ = notify_shutdown.send(ShutdownMessage::JobDeclaratorShutdown(tx));
+                        let _ = notify_shutdown
+                            .send(ShutdownMessage::JobDeclaratorShutdown(tx))
+                            .await;
                         rx.recv().await;
                         tracing::error!("All sparsed upstream and JDS connection is be terminated");
                         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -533,7 +536,7 @@ async fn try_initialize_single(
     channel_manager_to_upstream_receiver: Receiver<Sv2Frame>,
     jd_to_channel_manager_sender: Sender<JobDeclaration<'static>>,
     channel_manager_to_jd_receiver: Receiver<JobDeclaration<'static>>,
-    notify_shutdown: broadcast::Sender<ShutdownMessage>,
+    notify_shutdown: postage::broadcast::Sender<ShutdownMessage>,
     status_sender: Sender<Status>,
     mode: ConfigJDCMode,
     task_manager: Arc<TaskManager>,
@@ -572,6 +575,6 @@ async fn try_initialize_single(
 impl Drop for JobDeclaratorClient {
     fn drop(&mut self) {
         info!("JobDeclaratorClient dropped");
-        let _ = self.notify_shutdown.send(ShutdownMessage::ShutdownAll);
+        let _ = self.notify_shutdown.try_send(ShutdownMessage::ShutdownAll);
     }
 }

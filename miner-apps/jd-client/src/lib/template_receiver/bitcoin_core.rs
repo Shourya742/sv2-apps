@@ -5,9 +5,9 @@ use crate::{
 };
 use async_channel::{Receiver, Sender};
 use bitcoin_core_sv2::{BitcoinCoreSv2, CancellationToken};
+use postage::stream::Stream;
 use std::{path::PathBuf, sync::Arc, thread::JoinHandle};
 use stratum_apps::{stratum_core::parsers_sv2::TemplateDistribution, task_manager::TaskManager};
-use tokio::sync::broadcast;
 
 #[derive(Clone)]
 pub struct BitcoinCoreSv2Config {
@@ -23,7 +23,7 @@ pub struct BitcoinCoreSv2Config {
 #[cfg_attr(not(test), hotpath::measure)]
 pub async fn connect_to_bitcoin_core(
     bitcoin_core_config: BitcoinCoreSv2Config,
-    notify_shutdown: broadcast::Sender<ShutdownMessage>,
+    notify_shutdown: postage::broadcast::Sender<ShutdownMessage>,
     task_manager: Arc<TaskManager>,
     status_sender: Sender<Status>,
 ) -> JoinHandle<()> {
@@ -36,7 +36,7 @@ pub async fn connect_to_bitcoin_core(
         loop {
             tokio::select! {
                 message = shutdown_rx.recv() => {
-                    if let Ok(ShutdownMessage::ShutdownAll) = message {
+                    if let Some(ShutdownMessage::ShutdownAll) = message {
                         cancellation_token_clone.cancel();
                         break;
                     }
