@@ -4,6 +4,7 @@ use std::{
 };
 
 use async_channel::{unbounded, Receiver, Sender};
+use postage::stream::Stream;
 use stratum_apps::{
     custom_mutex::Mutex,
     network_helpers::noise_stream::NoiseTcpStream,
@@ -99,7 +100,7 @@ impl Downstream {
             Option<Vec<Tlv>>,
         )>,
         noise_stream: NoiseTcpStream<Message>,
-        notify_shutdown: broadcast::Sender<ShutdownMessage>,
+        notify_shutdown: postage::broadcast::Sender<ShutdownMessage>,
         task_manager: Arc<TaskManager>,
         status_sender: Sender<Status>,
         supported_extensions: Vec<u16>,
@@ -155,7 +156,7 @@ impl Downstream {
     /// - Forwards channel manager messages back to the downstream peer.
     pub async fn start(
         mut self,
-        notify_shutdown: broadcast::Sender<ShutdownMessage>,
+        notify_shutdown: postage::broadcast::Sender<ShutdownMessage>,
         status_sender: Sender<Status>,
         task_manager: Arc<TaskManager>,
     ) {
@@ -187,19 +188,19 @@ impl Downstream {
                 tokio::select! {
                     message = shutdown_rx.recv() => {
                         match message {
-                            Ok(ShutdownMessage::ShutdownAll) => {
+                            Some(ShutdownMessage::ShutdownAll) => {
                                 debug!("Downstream {downstream_id}: Received global shutdown");
                                 break;
                             }
-                            Ok(ShutdownMessage::DownstreamShutdown(id)) if downstream_id == id => {
+                            Some(ShutdownMessage::DownstreamShutdown(id)) if downstream_id == id => {
                                 debug!("Downstream {downstream_id}: Received downstream {id} shutdown");
                                 break;
                             }
-                            Ok(ShutdownMessage::JobDeclaratorShutdownFallback(_))  => {
+                            Some(ShutdownMessage::JobDeclaratorShutdownFallback(_))  => {
                                 debug!("Downstream {downstream_id}: Received job declaratorShutdown shutdown");
                                 break;
                             }
-                            Ok(ShutdownMessage::UpstreamShutdownFallback(_))  => {
+                            Some(ShutdownMessage::UpstreamShutdownFallback(_))  => {
                                 debug!("Downstream {downstream_id}: Received job Upstream shutdown");
                                 break;
                             }

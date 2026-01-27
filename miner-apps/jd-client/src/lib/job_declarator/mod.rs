@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use async_channel::{unbounded, Receiver, Sender};
+use postage::stream::Stream;
 use stratum_apps::{
     custom_mutex::Mutex,
     key_utils::Secp256k1PublicKey,
@@ -18,10 +19,7 @@ use stratum_apps::{
         types::{Message, Sv2Frame},
     },
 };
-use tokio::{
-    net::TcpStream,
-    sync::{broadcast, mpsc},
-};
+use tokio::{net::TcpStream, sync::mpsc};
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -71,7 +69,7 @@ impl JobDeclarator {
         upstreams: &(SocketAddr, SocketAddr, Secp256k1PublicKey, bool),
         channel_manager_sender: Sender<JobDeclaration<'static>>,
         channel_manager_receiver: Receiver<JobDeclaration<'static>>,
-        notify_shutdown: broadcast::Sender<ShutdownMessage>,
+        notify_shutdown: postage::broadcast::Sender<ShutdownMessage>,
         mode: ConfigJDCMode,
         task_manager: Arc<TaskManager>,
         status_sender: Sender<Status>,
@@ -128,7 +126,7 @@ impl JobDeclarator {
     /// - Cleans up on termination.
     pub async fn start(
         mut self,
-        notify_shutdown: broadcast::Sender<ShutdownMessage>,
+        notify_shutdown: postage::broadcast::Sender<ShutdownMessage>,
         shutdown_complete_tx: mpsc::Sender<()>,
         status_sender: Sender<Status>,
         task_manager: Arc<TaskManager>,
@@ -141,65 +139,63 @@ impl JobDeclarator {
             return;
         }
 
-        task_manager.spawn(
-            async move {
-                loop {
-                    let mut self_clone_1 = self.clone();
-                    let self_clone_2 = self.clone();
-                    tokio::select! {
-                        message = shutdown_rx.recv() => {
-                            match message {
-                                Ok(ShutdownMessage::ShutdownAll) => {
-                                    info!("Job Declarator: received shutdown signal.");
-                                    break;
-                                }
-                                Ok(ShutdownMessage::JobDeclaratorShutdownFallback(_)) => {
-                                    info!("Job Declarator: Received Job declarator shutdown.");
-                                    break;
-                                }
-                                Ok(ShutdownMessage::UpstreamShutdownFallback(_)) => {
-                                    info!("Job Declarator: Received Upstream shutdown.");
-                                    break;
-                                }
-                                Ok(ShutdownMessage::UpstreamShutdown(tx)) => {
-                                    info!("Job declarator shutdown requested");
-                                    drop(tx);
-                                    break;
-                                }
-                                Ok(ShutdownMessage::JobDeclaratorShutdown(tx)) => {
-                                    info!("Job declarator shutdown requested");
-                                    drop(tx);
-                                    break;
-                                }
-                                Err(e) => {
-                                    warn!(error = ?e, "Job Declarator: shutdown channel closed unexpectedly");
-                                    break;
-                                }
-                                _ => {}
+        task_manager.spawn(async move {
+            loop {
+                let mut self_clone_1 = self.clone();
+                let self_clone_2 = self.clone();
+                tokio::select! {
+                    message = shutdown_rx.recv() => {
+                        match message {
+                            Some(ShutdownMessage::ShutdownAll) => {
+                                info!("Job Declarator: received shutdown signal.");
+                                break;
                             }
+                            Some(ShutdownMessage::JobDeclaratorShutdownFallback(_)) => {
+                                info!("Job Declarator: Received Job declarator shutdown.");
+                                break;
+                            }
+                            Some(ShutdownMessage::UpstreamShutdownFallback(_)) => {
+                                info!("Job Declarator: Received Upstream shutdown.");
+                                break;
+                            }
+                            Some(ShutdownMessage::UpstreamShutdown(tx)) => {
+                                info!("Job declarator shutdown requested");
+                                drop(tx);
+                                break;
+                            }
+                            Some(ShutdownMessage::JobDeclaratorShutdown(tx)) => {
+                                info!("Job declarator shutdown requested");
+                                drop(tx);
+                                break;
+                            }
+                            None => {
+                                warn!("Job Declarator: shutdown channel closed unexpectedly");
+                                break;
+                            }
+                            _ => {}
                         }
-                        res = self_clone_1.handle_job_declarator_message() => {
-                            if let Err(e) = res {
-                                error!(error = ?e, "Job Declarator message handling failed");
-                                if handle_error(&status_sender, e).await {
-                                    break;
-                                }
-                            }
-                        }
-                        res = self_clone_2.handle_channel_manager_message() => {
-                            if let Err(e) = res {
-                                error!(error = ?e, "Channel Manager message handling failed");
-                                if handle_error(&status_sender, e).await {
-                                    break;
-                                }
-                            }
-                        },
                     }
+                    res = self_clone_1.handle_job_declarator_message() => {
+                        if let Err(e) = res {
+                            error!(error = ?e, "Job Declarator message handling failed");
+                            if handle_error(&status_sender, e).await {
+                                break;
+                            }
+                        }
+                    }
+                    res = self_clone_2.handle_channel_manager_message() => {
+                        if let Err(e) = res {
+                            error!(error = ?e, "Channel Manager message handling failed");
+                            if handle_error(&status_sender, e).await {
+                                break;
+                            }
+                        }
+                    },
                 }
-                drop(shutdown_complete_tx);
-                warn!("JobDeclarator: unified message loop exited.");
-            },
-        );
+            }
+            drop(shutdown_complete_tx);
+            warn!("JobDeclarator: unified message loop exited.");
+        });
     }
 
     /// Performs SV2 setup connection handshake with Job Declarator server.

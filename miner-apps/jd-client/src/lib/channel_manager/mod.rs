@@ -8,6 +8,7 @@ use std::{
 };
 
 use async_channel::{Receiver, Sender};
+use postage::stream::Stream;
 use stratum_apps::{
     coinbase_output_constraints::coinbase_output_constraints_message,
     custom_mutex::Mutex,
@@ -420,7 +421,7 @@ impl ChannelManager {
         cert_validity_sec: u64,
         listening_address: SocketAddr,
         task_manager: Arc<TaskManager>,
-        notify_shutdown: broadcast::Sender<ShutdownMessage>,
+        notify_shutdown: postage::broadcast::Sender<ShutdownMessage>,
         status_sender: Sender<Status>,
         channel_manager_sender: Sender<(DownstreamId, Mining<'static>, Option<Vec<Tlv>>)>,
         channel_manager_receiver: broadcast::Sender<(
@@ -448,12 +449,12 @@ impl ChannelManager {
             select! {
                 message = shutdown_rx.recv() => {
                     match message {
-                        Ok(ShutdownMessage::ShutdownAll) => {
+                        Some(ShutdownMessage::ShutdownAll) => {
                             info!("Channel Manager: received shutdown while waiting for templates");
                             return Ok(());
                         }
-                        Err(e) => {
-                            warn!(error = ?e, "shutdown channel closed unexpectedly");
+                        None => {
+                            warn!("shutdown channel closed unexpectedly");
                             return Ok(());
                         }
                         _ => {}
@@ -476,20 +477,20 @@ impl ChannelManager {
                 select! {
                     message = shutdown_rx.recv() => {
                         match message {
-                            Ok(ShutdownMessage::ShutdownAll) => {
+                            Some(ShutdownMessage::ShutdownAll) => {
                                 info!("Channel Manager: received shutdown signal");
                                 break;
                             }
-                            Ok(ShutdownMessage::JobDeclaratorShutdownFallback(_)) => {
+                            Some(ShutdownMessage::JobDeclaratorShutdownFallback(_)) => {
                                 info!("Downstream Server: received job declarator shutdown signal");
                                 break;
                             }
-                            Ok(ShutdownMessage::UpstreamShutdownFallback(_)) => {
+                            Some(ShutdownMessage::UpstreamShutdownFallback(_)) => {
                                 info!("Downstream Server: received upstream shutdown signal");
                                 break;
                             }
-                            Err(e) => {
-                                warn!(error = ?e, "shutdown channel closed unexpectedly");
+                            None => {
+                                warn!("shutdown channel closed unexpectedly");
                                 break;
                             }
                             _ => {}
@@ -588,7 +589,7 @@ impl ChannelManager {
     /// the internal state of the Channel Manager as needed.
     pub async fn start(
         mut self,
-        notify_shutdown: broadcast::Sender<ShutdownMessage>,
+        notify_shutdown: postage::broadcast::Sender<ShutdownMessage>,
         status_sender: Sender<Status>,
         task_manager: Arc<TaskManager>,
         coinbase_outputs: Vec<TxOut>,
@@ -615,30 +616,30 @@ impl ChannelManager {
                 tokio::select! {
                     message = shutdown_rx.recv() => {
                         match message {
-                            Ok(ShutdownMessage::ShutdownAll) => {
+                            Some(ShutdownMessage::ShutdownAll) => {
                                 info!("Channel Manager: received shutdown signal");
                                 break;
                             }
-                            Ok(ShutdownMessage::DownstreamShutdown(downstream_id)) => {
+                            Some(ShutdownMessage::DownstreamShutdown(downstream_id)) => {
                                 info!(%downstream_id, "Channel Manager: removing downstream after shutdown");
                                 if let Err(e) = self.remove_downstream(downstream_id) {
                                     tracing::error!(%downstream_id, error = ?e, "Failed to remove downstream");
                                 }
                             }
-                            Ok(ShutdownMessage::JobDeclaratorShutdownFallback((coinbase_outputs,tx))) => {
+                            Some(ShutdownMessage::JobDeclaratorShutdownFallback((coinbase_outputs,tx))) => {
                                 info!("Channel Manager: Job declarator shutdown signal");
                                 self.upstream_state.set(UpstreamState::SoloMining);
                                 self.channel_manager_data.super_safe_lock(|data| data.reset(coinbase_outputs));
                                 drop(tx);
                             }
-                            Ok(ShutdownMessage::UpstreamShutdownFallback((coinbase_outputs,tx))) => {
+                            Some(ShutdownMessage::UpstreamShutdownFallback((coinbase_outputs,tx))) => {
                                 info!("Channel Manager: Upstream shutdown signal");
                                 self.upstream_state.set(UpstreamState::SoloMining);
                                 self.channel_manager_data.super_safe_lock(|data| data.reset(coinbase_outputs));
                                 drop(tx);
                             }
-                            Err(e) => {
-                                warn!(error = ?e, "shutdown channel closed unexpectedly");
+                            None => {
+                                warn!("shutdown channel closed unexpectedly");
                                 break;
                             }
                             _ => {}

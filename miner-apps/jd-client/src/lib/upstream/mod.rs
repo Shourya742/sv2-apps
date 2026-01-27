@@ -12,6 +12,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use async_channel::{unbounded, Receiver, Sender};
+use postage::stream::Stream;
 use stratum_apps::{
     custom_mutex::Mutex,
     key_utils::Secp256k1PublicKey,
@@ -27,10 +28,7 @@ use stratum_apps::{
         types::{Message, Sv2Frame},
     },
 };
-use tokio::{
-    net::TcpStream,
-    sync::{broadcast, mpsc},
-};
+use tokio::{net::TcpStream, sync::mpsc};
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -83,7 +81,7 @@ impl Upstream {
         upstreams: &(SocketAddr, SocketAddr, Secp256k1PublicKey, bool),
         channel_manager_sender: Sender<Sv2Frame>,
         channel_manager_receiver: Receiver<Sv2Frame>,
-        notify_shutdown: broadcast::Sender<ShutdownMessage>,
+        notify_shutdown: postage::broadcast::Sender<ShutdownMessage>,
         task_manager: Arc<TaskManager>,
         status_sender: Sender<Status>,
         required_extensions: Vec<u16>,
@@ -245,7 +243,7 @@ impl Upstream {
         mut self,
         min_version: u16,
         max_version: u16,
-        notify_shutdown: broadcast::Sender<ShutdownMessage>,
+        notify_shutdown: postage::broadcast::Sender<ShutdownMessage>,
         shutdown_complete_tx: mpsc::Sender<()>,
         status_sender: Sender<Status>,
         task_manager: Arc<TaskManager>,
@@ -265,29 +263,29 @@ impl Upstream {
                 tokio::select! {
                     message = shutdown_rx.recv() => {
                         match message {
-                            Ok(ShutdownMessage::ShutdownAll) => {
+                            Some(ShutdownMessage::ShutdownAll) => {
                                 info!("Upstream: received shutdown signal.");
                                 break;
                             }
-                            Ok(ShutdownMessage::JobDeclaratorShutdownFallback(_)) => {
+                            Some(ShutdownMessage::JobDeclaratorShutdownFallback(_)) => {
                                 info!("Upstream: Received Job declarator shutdown.");
                                 break;
                             }
-                            Ok(ShutdownMessage::UpstreamShutdownFallback(_)) => {
+                            Some(ShutdownMessage::UpstreamShutdownFallback(_)) => {
                                 info!("Upstream: Received Upstream shutdown.");
                                 break;
                             }
-                            Ok(ShutdownMessage::UpstreamShutdown(tx)) => {
+                            Some(ShutdownMessage::UpstreamShutdown(tx)) => {
                                 info!("Upstream shutdown requested");
                                 drop(tx);
                                 break;
                             }
-                            Ok(ShutdownMessage::JobDeclaratorShutdown(tx)) => {
+                            Some(ShutdownMessage::JobDeclaratorShutdown(tx)) => {
                                 info!("Upstream shutdown requested");
                                 drop(tx);
                                 break;
                             }
-                            Err(_) => {
+                            None => {
                                 warn!("Upstream: shutdown channel closed unexpectedly.");
                                 break;
                             }

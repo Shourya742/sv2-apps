@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use async_channel::{Receiver, Sender};
+use postage::stream::Stream;
 use stratum_apps::{
     network_helpers::noise_stream::{NoiseTcpReadHalf, NoiseTcpWriteHalf},
     stratum_core::framing_sv2::framing::Frame,
     task_manager::TaskManager,
     utils::types::{Message, Sv2Frame},
 };
-use tokio::sync::broadcast;
 use tracing::{error, trace, warn, Instrument as _};
 
 use crate::{
@@ -25,7 +25,7 @@ pub fn spawn_io_tasks(
     mut writer: NoiseTcpWriteHalf<Message>,
     outbound_rx: Receiver<Sv2Frame>,
     inbound_tx: Sender<Sv2Frame>,
-    notify_shutdown: broadcast::Sender<ShutdownMessage>,
+    notify_shutdown: postage::broadcast::Sender<ShutdownMessage>,
     status_sender: StatusSender,
 ) {
     let caller = std::panic::Location::caller();
@@ -42,26 +42,26 @@ pub fn spawn_io_tasks(
                 tokio::select! {
                     message = shutdown_rx.recv() => {
                         match message {
-                            Ok(ShutdownMessage::ShutdownAll) => {
+                            Some(ShutdownMessage::ShutdownAll) => {
                                 trace!("Received global shutdown");
                                 inbound_tx.close();
                                 break;
                             }
-                            Ok(ShutdownMessage::DownstreamShutdown(down_id))  if matches!(status_type, StatusType::Downstream(id) if id == down_id) => {
+                            Some(ShutdownMessage::DownstreamShutdown(down_id))  if matches!(status_type, StatusType::Downstream(id) if id == down_id) => {
                                 trace!(down_id, "Received downstream shutdown");
                                 if status_type != StatusType::TemplateReceiver {
                                     inbound_tx.close();
                                     break;
                                 }
                             }
-                            Ok(ShutdownMessage::JobDeclaratorShutdownFallback(_)) if !matches!(status_type, StatusType::TemplateReceiver) => {
+                            Some(ShutdownMessage::JobDeclaratorShutdownFallback(_)) if !matches!(status_type, StatusType::TemplateReceiver) => {
                                 trace!("Received job declarator shutdown");
                                 if status_type != StatusType::TemplateReceiver {
                                     inbound_tx.close();
                                     break;
                                 }
                             }
-                            Ok(ShutdownMessage::UpstreamShutdownFallback(_)) if !matches!(status_type, StatusType::TemplateReceiver) => {
+                            Some(ShutdownMessage::UpstreamShutdownFallback(_)) if !matches!(status_type, StatusType::TemplateReceiver) => {
                                 trace!("Received upstream shutdown");
                                 if status_type != StatusType::TemplateReceiver {
                                     inbound_tx.close();
@@ -69,7 +69,7 @@ pub fn spawn_io_tasks(
                                 }
                             }
 
-                            Ok(ShutdownMessage::UpstreamShutdown(tx)) if !matches!(status_type, StatusType::TemplateReceiver) => {
+                            Some(ShutdownMessage::UpstreamShutdown(tx)) if !matches!(status_type, StatusType::TemplateReceiver) => {
                                 trace!("Received upstream shutdown");
                                 if status_type != StatusType::TemplateReceiver {
                                     inbound_tx.close();
@@ -77,7 +77,7 @@ pub fn spawn_io_tasks(
                                 }
                                 drop(tx);
                             }
-                            Ok(ShutdownMessage::JobDeclaratorShutdown(tx)) if !matches!(status_type, StatusType::TemplateReceiver) => {
+                            Some(ShutdownMessage::JobDeclaratorShutdown(tx)) if !matches!(status_type, StatusType::TemplateReceiver) => {
                                 trace!("Received upstream shutdown");
                                 if status_type != StatusType::TemplateReceiver {
                                     inbound_tx.close();
@@ -137,33 +137,33 @@ pub fn spawn_io_tasks(
                 tokio::select! {
                     message = shutdown_rx.recv() => {
                         match message {
-                            Ok(ShutdownMessage::ShutdownAll) => {
+                            Some(ShutdownMessage::ShutdownAll) => {
                                 trace!("Received global shutdown");
                                 outbound_rx.close();
                                 break;
                             }
-                            Ok(ShutdownMessage::DownstreamShutdown(down_id))  if matches!(status_type, StatusType::Downstream(id) if id == down_id) => {
+                            Some(ShutdownMessage::DownstreamShutdown(down_id))  if matches!(status_type, StatusType::Downstream(id) if id == down_id) => {
                                 trace!(down_id, "Received downstream shutdown");
                                 if status_type != StatusType::TemplateReceiver {
                                     outbound_rx.close();
                                     break;
                                 }
                             }
-                            Ok(ShutdownMessage::JobDeclaratorShutdownFallback(_)) if !matches!(status_type, StatusType::TemplateReceiver) => {
+                            Some(ShutdownMessage::JobDeclaratorShutdownFallback(_)) if !matches!(status_type, StatusType::TemplateReceiver) => {
                                 trace!("Received job declarator shutdown");
                                 if status_type != StatusType::TemplateReceiver {
                                     outbound_rx.close();
                                     break;
                                 }
                             }
-                            Ok(ShutdownMessage::UpstreamShutdownFallback(_)) if !matches!(status_type, StatusType::TemplateReceiver) => {
+                            Some(ShutdownMessage::UpstreamShutdownFallback(_)) if !matches!(status_type, StatusType::TemplateReceiver) => {
                                 trace!("Received upstream shutdown");
                                 if status_type != StatusType::TemplateReceiver {
                                     outbound_rx.close();
                                     break;
                                 }
                             }
-                            Ok(ShutdownMessage::UpstreamShutdown(tx)) if !matches!(status_type, StatusType::TemplateReceiver) => {
+                            Some(ShutdownMessage::UpstreamShutdown(tx)) if !matches!(status_type, StatusType::TemplateReceiver) => {
                                 trace!("Received upstream shutdown");
                                 if status_type != StatusType::TemplateReceiver {
                                     outbound_rx.close();
@@ -171,7 +171,7 @@ pub fn spawn_io_tasks(
                                 }
                                 drop(tx);
                             }
-                            Ok(ShutdownMessage::JobDeclaratorShutdown(tx)) if !matches!(status_type, StatusType::TemplateReceiver) => {
+                            Some(ShutdownMessage::JobDeclaratorShutdown(tx)) if !matches!(status_type, StatusType::TemplateReceiver) => {
                                 trace!("Received upstream shutdown");
                                 if status_type != StatusType::TemplateReceiver {
                                     outbound_rx.close();
