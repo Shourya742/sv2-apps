@@ -3,10 +3,9 @@ use stratum_apps::stratum_core::sv1_api::{
     utils::{Extranonce, HexU32Be},
     IsServer,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
-    error,
     sv1::{downstream::SubmitShareWithChannelId, Sv1Server},
     utils::validate_sv1_share,
 };
@@ -88,6 +87,10 @@ impl IsServer<'static> for Sv1Server {
         let downstream_id = client_id.expect("Downstream id should exist");
         info!("Received mining.authorize from Sv1 downstream {downstream_id}");
         debug!("Down: Handling mining.authorize: {:?}", request);
+
+        // Always accept authorization - the username portion from SV1 is not used upstream.
+        // The worker suffix (part after '.') will be used for TLV extension if negotiated,
+        // and length validation happens at share submission time.
         true
     }
 
@@ -188,10 +191,14 @@ impl IsServer<'static> for Sv1Server {
             .expect("Downstream should exist");
         downstream
             .downstream_data
-            .super_safe_lock(|data| data.authorized_worker_name == *name)
+            .super_safe_lock(|data| data.worker_name_from_authorize == *name)
     }
 
     /// Authorizes a Downstream role.
+    ///
+    /// Stores the full authorize name in `worker_name_from_authorize` and extracts the
+    /// worker suffix (part after the first '.') into `user_identity` for TLV extension use.
+    /// If no '.' delimiter exists, the full name is used as the user_identity.
     fn authorize(&mut self, client_id: Option<usize>, name: &str) {
         let downstream_id = client_id.expect("Downstream id should exist");
         let downstream = self
@@ -200,14 +207,22 @@ impl IsServer<'static> for Sv1Server {
             .expect("Downstream should exist");
 
         let is_authorized = self.is_authorized(client_id, name);
+
+        // Extract worker suffix: part after first '.', or full name if no '.'
+        let user_identity = if let Some(dot_pos) = name.find('.') {
+            name[dot_pos + 1..].to_string()
+        } else {
+            name.to_string()
+        };
+
         downstream.downstream_data.super_safe_lock(|data| {
             if !is_authorized {
-                data.authorized_worker_name = name.to_string();
+                data.worker_name_from_authorize = name.to_string();
             }
-            data.user_identity = name.to_string();
+            data.user_identity = user_identity.clone();
             debug!(
-                "Down: Set user_identity to '{}' for downstream {}",
-                data.user_identity, downstream_id
+                "Down: Set user_identity to '{}' (from '{}') for downstream {}",
+                data.user_identity, name, downstream_id
             );
         });
     }

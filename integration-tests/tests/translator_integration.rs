@@ -1613,3 +1613,143 @@ async fn translator_does_not_shutdown_on_missing_downstream_channel() {
 
     assert!(TcpListener::bind(tproxy_addr).await.is_err());
 }
+
+/// This test verifies that the translator correctly handles miners with short worker names
+/// that fit within the 32-byte UserIdentity TLV limit.
+///
+/// The user_identity field in TLV only contains the worker suffix (part after the '.')
+/// from the mining.authorize message. With "shortuser.worker1", the TLV will contain "worker1".
+#[tokio::test]
+async fn translator_handles_worker_name_within_limit() {
+    start_tracing();
+    let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
+    let (_pool, pool_addr) = start_pool(sv2_tp_config(tp_addr), vec![], vec![]).await;
+    let (pool_translator_sniffer, pool_translator_sniffer_addr) =
+        start_sniffer("0", pool_addr, false, vec![], None);
+
+    // Start translator in non-aggregated mode (needed for user identity TLV)
+    let (_, tproxy_addr) =
+        start_sv2_translator(&[pool_translator_sniffer_addr], false, vec![], vec![], None).await;
+
+    // Use a normal username.worker format - worker suffix "worker1" is 7 bytes, well under 32
+    let worker_name = Some("shortuser.worker1".to_string());
+
+    let (_minerd_process, _minerd_addr) =
+        start_minerd(tproxy_addr, worker_name, Some("x".to_string()), false).await;
+
+    // Verify the translator can successfully:
+    // 1. Complete setup connection
+    pool_translator_sniffer
+        .wait_for_message_type(MessageDirection::ToUpstream, MESSAGE_TYPE_SETUP_CONNECTION)
+        .await;
+    pool_translator_sniffer
+        .wait_for_message_type(
+            MessageDirection::ToDownstream,
+            MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS,
+        )
+        .await;
+
+    // 2. Open a mining channel
+    pool_translator_sniffer
+        .wait_for_message_type(
+            MessageDirection::ToUpstream,
+            MESSAGE_TYPE_OPEN_EXTENDED_MINING_CHANNEL,
+        )
+        .await;
+    pool_translator_sniffer
+        .wait_for_message_type(
+            MessageDirection::ToDownstream,
+            MESSAGE_TYPE_OPEN_EXTENDED_MINING_CHANNEL_SUCCESS,
+        )
+        .await;
+
+    // 3. Receive a job
+    pool_translator_sniffer
+        .wait_for_message_type(
+            MessageDirection::ToDownstream,
+            MESSAGE_TYPE_NEW_EXTENDED_MINING_JOB,
+        )
+        .await;
+
+    // 4. Submit shares successfully
+    pool_translator_sniffer
+        .wait_for_message_type(
+            MessageDirection::ToUpstream,
+            MESSAGE_TYPE_SUBMIT_SHARES_EXTENDED,
+        )
+        .await;
+}
+
+/// This test verifies that the translator disconnects miners whose worker suffix
+/// (part after '.') exceeds the 32-byte UserIdentity TLV limit.
+///
+/// The user_identity TLV field has a 32-byte limit. When the worker suffix extracted
+/// from mining.authorize exceeds this limit, the translator should disconnect the
+/// client at share submission time (when the TLV would be created).
+#[tokio::test]
+async fn translator_disconnects_on_worker_suffix_exceeding_32_bytes() {
+    start_tracing();
+    let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
+    let (_pool, pool_addr) = start_pool(sv2_tp_config(tp_addr), vec![], vec![]).await;
+    let (pool_translator_sniffer, pool_translator_sniffer_addr) =
+        start_sniffer("0", pool_addr, false, vec![], None);
+
+    // Start translator in non-aggregated mode (needed for user identity TLV)
+    let (_, tproxy_addr) =
+        start_sv2_translator(&[pool_translator_sniffer_addr], false, vec![], vec![], None).await;
+
+    // Use a short username with a very long worker suffix (42 chars, exceeds 32 byte limit)
+    // The worker suffix "very_long_worker_name_that_exceeds_limit" is what goes into the TLV
+    let long_worker_suffix = Some("shortuser.very_long_worker_name_that_exceeds_limit".to_string());
+
+    let (_minerd_process, _minerd_addr) = start_minerd(
+        tproxy_addr,
+        long_worker_suffix,
+        Some("x".to_string()),
+        false,
+    )
+    .await;
+
+    // The miner should be able to complete the handshake (authorize always succeeds)
+    pool_translator_sniffer
+        .wait_for_message_type(MessageDirection::ToUpstream, MESSAGE_TYPE_SETUP_CONNECTION)
+        .await;
+    pool_translator_sniffer
+        .wait_for_message_type(
+            MessageDirection::ToDownstream,
+            MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS,
+        )
+        .await;
+
+    pool_translator_sniffer
+        .wait_for_message_type(
+            MessageDirection::ToUpstream,
+            MESSAGE_TYPE_OPEN_EXTENDED_MINING_CHANNEL,
+        )
+        .await;
+    pool_translator_sniffer
+        .wait_for_message_type(
+            MessageDirection::ToDownstream,
+            MESSAGE_TYPE_OPEN_EXTENDED_MINING_CHANNEL_SUCCESS,
+        )
+        .await;
+
+    pool_translator_sniffer
+        .wait_for_message_type(
+            MessageDirection::ToDownstream,
+            MESSAGE_TYPE_NEW_EXTENDED_MINING_JOB,
+        )
+        .await;
+
+    // The miner will attempt to submit shares, but the translator should disconnect
+    // because the worker suffix exceeds 32 bytes and can't be encoded in the TLV.
+    // We wait a bit and verify NO share submission message arrives at the pool.
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    pool_translator_sniffer
+        .assert_message_not_present(
+            MessageDirection::ToUpstream,
+            MESSAGE_TYPE_SUBMIT_SHARES_EXTENDED,
+        )
+        .await;
+}

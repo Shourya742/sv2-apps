@@ -453,6 +453,7 @@ impl Sv1Server {
         .map_err(|_| TproxyError::shutdown(TproxyErrorKind::SV1Error))?;
 
         // Only add TLV fields with user identity in non-aggregated mode
+        // user_identity contains the worker suffix from mining.authorize (e.g., "worker1" from "user.worker1")
         let tlv_fields = if !self.config.aggregate_channels {
             let user_identity_string = self
                 .downstreams
@@ -460,11 +461,20 @@ impl Sv1Server {
                 .unwrap()
                 .downstream_data
                 .super_safe_lock(|d| d.user_identity.clone());
-            UserIdentity::new(&user_identity_string)
-                .unwrap()
-                .to_tlv()
-                .ok()
-                .map(|tlv| vec![tlv])
+            match UserIdentity::new(&user_identity_string) {
+                Ok(ui) => ui.to_tlv().ok().map(|tlv| vec![tlv]),
+                Err(e) => {
+                    // Worker suffix exceeds 32 byte limit - disconnect the client
+                    error!(
+                        "User identity '{}' exceeds 32 byte limit for TLV: {} - disconnecting downstream {}",
+                        user_identity_string, e, message.downstream_id
+                    );
+                    return Err(TproxyError::disconnect(
+                        TproxyErrorKind::SV1Error,
+                        message.downstream_id,
+                    ));
+                }
+            }
         } else {
             None
         };
@@ -720,7 +730,7 @@ impl Sv1Server {
         downstream_id: DownstreamId,
     ) -> TproxyResult<(), error::Sv1Server> {
         let config = &self.config.downstream_difficulty_config;
-        let downstream = self.downstreams.get(&downstream_id).unwrap();
+        let _downstream = self.downstreams.get(&downstream_id).unwrap();
 
         let hashrate = config.min_individual_miner_hashrate as f64;
         let shares_per_min = config.shares_per_minute as f64;
@@ -742,17 +752,13 @@ impl Sv1Server {
             }
         });
 
+        // Build channel identity from config (not from downstream's user_identity which is for TLV)
         let miner_id = self.miner_counter.fetch_add(1, Ordering::SeqCst) + 1;
-        let user_identity = format!("{}.miner{}", self.config.user_identity, miner_id);
-
-        downstream
-            .downstream_data
-            .safe_lock(|d| d.user_identity = user_identity.clone())
-            .map_err(TproxyError::shutdown)?;
+        let channel_identity = format!("{}.miner{}", self.config.user_identity, miner_id);
 
         if let Ok(open_channel_msg) = build_sv2_open_extended_mining_channel(
             request_id,
-            user_identity.clone(),
+            channel_identity,
             hashrate as Hashrate,
             max_target,
             min_extranonce_size,
