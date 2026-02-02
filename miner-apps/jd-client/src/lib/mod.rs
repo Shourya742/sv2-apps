@@ -8,6 +8,7 @@ use stratum_apps::{
     task_manager::TaskManager,
     tp_type::TemplateProviderType,
     utils::types::Sv2Frame,
+    SHUTDOWN_BROADCAST_CAPACITY,
 };
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, info, warn};
@@ -51,7 +52,8 @@ pub struct JobDeclaratorClient {
 impl JobDeclaratorClient {
     /// Creates a new [`JobDeclaratorClient`] instance.
     pub fn new(config: JobDeclaratorClientConfig) -> Self {
-        let (notify_shutdown, _) = tokio::sync::broadcast::channel::<ShutdownMessage>(100);
+        let (notify_shutdown, _) =
+            tokio::sync::broadcast::channel::<ShutdownMessage>(SHUTDOWN_BROADCAST_CAPACITY);
         Self {
             config,
             notify_shutdown,

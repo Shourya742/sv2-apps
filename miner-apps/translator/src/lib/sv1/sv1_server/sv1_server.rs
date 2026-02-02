@@ -42,7 +42,7 @@ use stratum_apps::{
         sv1_api::{json_rpc, utils::HexU32Be, IsServer},
     },
     task_manager::TaskManager,
-    utils::types::{DownstreamId, Hashrate, RequestId, SharesPerMinute},
+    utils::types::{ChannelId, DownstreamId, Hashrate, RequestId, SharesPerMinute},
 };
 use tokio::{
     net::TcpListener,
@@ -453,6 +453,7 @@ impl Sv1Server {
         .map_err(|_| TproxyError::shutdown(TproxyErrorKind::SV1Error))?;
 
         // Only add TLV fields with user identity in non-aggregated mode
+        // user_identity contains the worker suffix from mining.authorize (e.g., "worker1" from "user.worker1")
         let tlv_fields = if !self.config.aggregate_channels {
             let user_identity_string = self
                 .downstreams
@@ -460,11 +461,20 @@ impl Sv1Server {
                 .unwrap()
                 .downstream_data
                 .super_safe_lock(|d| d.user_identity.clone());
-            UserIdentity::new(&user_identity_string)
-                .unwrap()
-                .to_tlv()
-                .ok()
-                .map(|tlv| vec![tlv])
+            match UserIdentity::new(&user_identity_string) {
+                Ok(ui) => ui.to_tlv().ok().map(|tlv| vec![tlv]),
+                Err(e) => {
+                    // Worker suffix exceeds 32 byte limit - disconnect the client
+                    error!(
+                        "User identity '{}' exceeds 32 byte limit for TLV: {} - disconnecting downstream {}",
+                        user_identity_string, e, message.downstream_id
+                    );
+                    return Err(TproxyError::disconnect(
+                        TproxyErrorKind::SV1Error,
+                        message.downstream_id,
+                    ));
+                }
+            }
         } else {
             None
         };
@@ -720,7 +730,7 @@ impl Sv1Server {
         downstream_id: DownstreamId,
     ) -> TproxyResult<(), error::Sv1Server> {
         let config = &self.config.downstream_difficulty_config;
-        let downstream = self.downstreams.get(&downstream_id).unwrap();
+        let _downstream = self.downstreams.get(&downstream_id).unwrap();
 
         let hashrate = config.min_individual_miner_hashrate as f64;
         let shares_per_min = config.shares_per_minute as f64;
@@ -742,17 +752,13 @@ impl Sv1Server {
             }
         });
 
+        // Build channel identity from config (not from downstream's user_identity which is for TLV)
         let miner_id = self.miner_counter.fetch_add(1, Ordering::SeqCst) + 1;
-        let user_identity = format!("{}.miner{}", self.config.user_identity, miner_id);
-
-        downstream
-            .downstream_data
-            .safe_lock(|d| d.user_identity = user_identity.clone())
-            .map_err(TproxyError::shutdown)?;
+        let channel_identity = format!("{}.miner{}", self.config.user_identity, miner_id);
 
         if let Ok(open_channel_msg) = build_sv2_open_extended_mining_channel(
             request_id,
-            user_identity.clone(),
+            channel_identity,
             hashrate as Hashrate,
             max_target,
             min_extranonce_size,
@@ -888,7 +894,7 @@ impl Sv1Server {
     /// Used only when vardiff is disabled.
     async fn send_set_difficulty_to_specific_downstream(
         &self,
-        channel_id: u32,
+        channel_id: ChannelId,
         target: Target,
     ) -> TproxyResult<(), error::Sv1Server> {
         let affected = self.downstreams.iter().find(|downstream| {
@@ -902,7 +908,20 @@ impl Sv1Server {
                 "No downstream found for channel {} when vardiff is disabled",
                 channel_id
             );
-            return Err(TproxyError::shutdown(
+            info!("Sending CloseChannel message: Channel id {channel_id}");
+            let reason_code = Str0255::try_from("downstream disconnected".to_string()).unwrap();
+            self.sv1_server_channel_state
+                .channel_manager_sender
+                .send((
+                    Mining::CloseChannel(CloseChannel {
+                        channel_id,
+                        reason_code,
+                    }),
+                    None,
+                ))
+                .await
+                .map_err(|_| TproxyError::shutdown(TproxyErrorKind::ChannelErrorSender))?;
+            return Err(TproxyError::log(
                 TproxyErrorKind::DownstreamNotFoundWithChannelId(channel_id),
             ));
         };
@@ -955,11 +974,6 @@ impl Sv1Server {
             .downstream_difficulty_config
             .job_keepalive_interval_secs;
 
-        if keepalive_interval_secs == 0 {
-            debug!("Job keepalive disabled (interval set to 0)");
-            return;
-        }
-
         let interval = Duration::from_secs(keepalive_interval_secs as u64);
         let check_interval =
             Duration::from_secs(keepalive_interval_secs as u64 / 2).max(Duration::from_secs(5));
@@ -970,7 +984,7 @@ impl Sv1Server {
 
         loop {
             tokio::time::sleep(check_interval).await;
-            let keepalive_targets: Vec<(DownstreamId, Option<u32>)> = self
+            let keepalive_targets: Vec<(DownstreamId, Option<ChannelId>)> = self
                 .downstreams
                 .iter()
                 .filter_map(|downstream| {

@@ -24,8 +24,8 @@ if [ "$EXIT_CODE" -eq 0 ] ; then
   exit 0
 fi
 
-# If cargo failed, check whether it was 'already uploaded'
-if echo "$OUTPUT" | grep -q "already uploaded"; then
+# If cargo failed, check whether it was 'already exists'
+if echo "$OUTPUT" | grep -q "already exists"; then
   echo "Crate is already published: $CRATE_DIR"
   exit 0
 fi

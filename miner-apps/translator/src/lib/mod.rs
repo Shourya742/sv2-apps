@@ -13,7 +13,9 @@
 #![allow(clippy::module_inception)]
 use async_channel::{unbounded, Receiver, Sender};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
-use stratum_apps::{task_manager::TaskManager, utils::types::Sv2Frame};
+use stratum_apps::{
+    task_manager::TaskManager, utils::types::Sv2Frame, SHUTDOWN_BROADCAST_CAPACITY,
+};
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, info, warn};
 
@@ -62,7 +64,8 @@ impl TranslatorSv2 {
     pub async fn start(self) {
         info!("Starting Translator Proxy...");
 
-        let (notify_shutdown, _) = broadcast::channel::<ShutdownMessage>(1);
+        let (notify_shutdown, _) =
+            broadcast::channel::<ShutdownMessage>(SHUTDOWN_BROADCAST_CAPACITY);
         let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel::<()>(1);
         let task_manager = Arc::new(TaskManager::new());
         let (status_sender, status_receiver) = async_channel::unbounded::<Status>();

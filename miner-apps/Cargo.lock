@@ -299,7 +299,8 @@ dependencies = [
 [[package]]
 name = "bitcoin-capnp-types"
 version = "0.1.0"
-source = "git+https://github.com/2140-dev/bitcoin-capnp-types?rev=77a609a0058478d6c8aad24351b6baeb3e0555fc#77a609a0058478d6c8aad24351b6baeb3e0555fc"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e20759e30b46af17a13f2e34c9e090c3672938b5a0c22358cba971d1a8f5d492"
 dependencies = [
  "capnp",
  "capnpc",

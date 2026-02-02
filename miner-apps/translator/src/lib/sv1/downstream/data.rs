@@ -22,7 +22,10 @@ pub struct DownstreamData {
     pub version_rolling_mask: Option<HexU32Be>,
     pub version_rolling_min_bit: Option<HexU32Be>,
     pub last_job_version_field: Option<u32>,
-    pub authorized_worker_name: String,
+    /// The raw string received from SV1 mining.authorize (e.g., "username.worker1")
+    pub worker_name_from_authorize: String,
+    /// The worker suffix extracted from mining.authorize for TLV extension (e.g., "worker1" from "username.worker1")
+    /// If no '.' delimiter exists, contains the full authorize name.
     pub user_identity: String,
     pub target: Target,
     pub hashrate: Option<Hashrate>,
@@ -56,7 +59,7 @@ impl DownstreamData {
             version_rolling_mask: None,
             version_rolling_min_bit: None,
             last_job_version_field: None,
-            authorized_worker_name: String::new(),
+            worker_name_from_authorize: String::new(),
             user_identity: String::new(),
             target,
             hashrate,

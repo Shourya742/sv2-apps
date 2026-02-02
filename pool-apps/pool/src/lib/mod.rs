@@ -5,7 +5,7 @@ use async_channel::unbounded;
 use bitcoin_core_sv2::CancellationToken;
 use stratum_apps::{
     stratum_core::bitcoin::consensus::Encodable, task_manager::TaskManager,
-    tp_type::TemplateProviderType,
+    tp_type::TemplateProviderType, SHUTDOWN_BROADCAST_CAPACITY,
 };
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
@@ -41,7 +41,8 @@ pub struct PoolSv2 {
 #[cfg_attr(not(test), hotpath::measure_all)]
 impl PoolSv2 {
     pub fn new(config: PoolConfig) -> Self {
-        let (notify_shutdown, _) = tokio::sync::broadcast::channel::<ShutdownMessage>(100);
+        let (notify_shutdown, _) =
+            tokio::sync::broadcast::channel::<ShutdownMessage>(SHUTDOWN_BROADCAST_CAPACITY);
         Self {
             config,
             notify_shutdown,

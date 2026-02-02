@@ -75,3 +75,15 @@ pub mod tp_type;
 
 /// Creates a CoinbaseOutputConstraints message from a list of coinbase outputs
 pub mod coinbase_output_constraints;
+
+/// Maximum theoretical TCP client connections
+/// (limited by the number of file descriptors a process can have)
+const MAX_TCP_CLIENTS: usize = 1_048_576;
+
+/// Safety margin multiplier for shutdown broadcast buffer to handle stacked lags.
+const SHUTDOWN_BUFFER_SAFETY_MARGIN: usize = 4;
+
+/// Buffer size for shutdown broadcast channels.
+/// Calculated as MAX_TCP_CLIENTS × SHUTDOWN_BUFFER_SAFETY_MARGIN.
+/// TODO: migrate away from broadcast channels, see issue https://github.com/stratum-mining/sv2-apps/issues/215
+pub const SHUTDOWN_BROADCAST_CAPACITY: usize = MAX_TCP_CLIENTS * SHUTDOWN_BUFFER_SAFETY_MARGIN;
