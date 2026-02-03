@@ -2,8 +2,7 @@ use serde::{
     de::{self, Deserializer},
     Deserialize,
 };
-use std::path::PathBuf;
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 /// Deserialize a duration from a TOML string.
 pub fn duration_from_toml<'de, D>(deserializer: D) -> Result<Duration, D::Error>
@@ -66,8 +65,7 @@ mod tests {
     use super::*;
     use ext_config::{Config, File, FileFormat};
     use serde::Deserialize;
-    use std::env;
-    use std::path::PathBuf;
+    use std::{env, path::PathBuf};
 
     #[derive(Debug, Deserialize)]
     struct TestConfig {
