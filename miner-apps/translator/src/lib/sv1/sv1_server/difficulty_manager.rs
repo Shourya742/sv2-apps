@@ -1,4 +1,4 @@
-use crate::sv1::sv1_server::data::PendingTargetUpdate;
+use crate::{is_aggregated, is_non_aggregated, sv1::sv1_server::data::PendingTargetUpdate};
 
 use stratum_apps::{
     stratum_core::{
@@ -184,7 +184,7 @@ impl Sv1Server {
                                                                         * new_target,
                                                                         * new_hashrate) */
     ) {
-        if self.config.aggregate_channels {
+        if is_aggregated() {
             // Aggregated mode: Send single UpdateChannel with minimum target and total hashrate of
             // ALL downstreams
             self.send_aggregated_update_channel(all_updates).await;
@@ -298,7 +298,7 @@ impl Sv1Server {
             set_target.channel_id, new_upstream_target
         );
 
-        if self.config.aggregate_channels {
+        if is_aggregated() {
             return self
                 .handle_aggregated_set_target(new_upstream_target, set_target.channel_id)
                 .await;
@@ -465,7 +465,7 @@ impl Sv1Server {
     /// (e.g., disconnect). Calculates total hashrate and minimum target among all remaining
     /// downstreams.
     pub async fn send_update_channel_on_downstream_state_change(&self) {
-        if !self.config.aggregate_channels {
+        if is_non_aggregated() {
             return;
         }
 

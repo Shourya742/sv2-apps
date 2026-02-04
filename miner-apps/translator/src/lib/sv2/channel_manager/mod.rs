@@ -4,4 +4,3 @@ pub mod mining_message_handler;
 pub use channel_manager::ChannelManager;
 pub(super) mod channel;
 pub(crate) mod data;
-pub use data::ChannelMode;

@@ -2890,6 +2890,7 @@ dependencies = [
  "futures",
  "generic-array",
  "miniscript 13.0.0",
+ "parking_lot",
  "prometheus",
  "rand 0.8.5",
  "rustversion",

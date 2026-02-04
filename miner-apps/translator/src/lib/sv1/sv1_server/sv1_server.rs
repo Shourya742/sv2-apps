@@ -1,6 +1,7 @@
 use crate::{
     config::TranslatorConfig,
     error::{self, TproxyError, TproxyErrorKind, TproxyResult},
+    is_aggregated, is_non_aggregated,
     status::{handle_error, Status, StatusSender},
     sv1::{
         downstream::downstream::Downstream,
@@ -103,7 +104,7 @@ impl Sv1Server {
         let shares_per_minute = config.downstream_difficulty_config.shares_per_minute;
         let sv1_server_channel_state =
             Sv1ServerChannelState::new(channel_manager_receiver, channel_manager_sender);
-        let sv1_server_data = Arc::new(Mutex::new(Sv1ServerData::new(config.aggregate_channels)));
+        let sv1_server_data = Arc::new(Mutex::new(Sv1ServerData::new()));
         Self {
             sv1_server_channel_state,
             sv1_server_data,
@@ -209,7 +210,7 @@ impl Sv1Server {
 
                                     let channel_id = downstream.downstream_data.super_safe_lock(|d| d.channel_id);
                                     if let Some(channel_id) = channel_id {
-                                        if !self.config.aggregate_channels {
+                                        if is_non_aggregated() {
                                             info!("Sending CloseChannel message: {channel_id} for downstream: {downstream_id}");
                                             let reason_code =  Str0255::try_from("downstream disconnected".to_string()).unwrap();
                                             _ = self.sv1_server_channel_state
@@ -453,7 +454,7 @@ impl Sv1Server {
         .map_err(|_| TproxyError::shutdown(TproxyErrorKind::SV1Error))?;
 
         // Only add TLV fields with user identity in non-aggregated mode
-        let tlv_fields = if !self.config.aggregate_channels {
+        let tlv_fields = if is_non_aggregated() {
             let user_identity_string = self
                 .downstreams
                 .get(&message.downstream_id)
@@ -814,7 +815,7 @@ impl Sv1Server {
             set_target.channel_id, new_target
         );
 
-        if self.config.aggregate_channels {
+        if is_aggregated() {
             // Aggregated mode: send set_difficulty to ALL downstreams
             return self
                 .send_set_difficulty_to_all_downstreams(new_target)
@@ -1163,13 +1164,11 @@ mod tests {
         assert_eq!(server.listener_addr.ip().to_string(), "127.0.0.1");
         assert_eq!(server.listener_addr.port(), 3333);
         assert_eq!(server.config.user_identity, "test_user");
-        assert!(server.config.aggregate_channels);
     }
 
     #[test]
-    fn test_sv1_server_aggregated_config() {
+    fn test_sv1_server_config() {
         let mut config = create_test_config();
-        config.aggregate_channels = true;
         config.downstream_difficulty_config.enable_vardiff = true;
 
         let (cm_sender, _cm_receiver) = unbounded();
@@ -1178,24 +1177,7 @@ mod tests {
 
         let server = Sv1Server::new(addr, cm_receiver, cm_sender, config);
 
-        assert!(server.config.aggregate_channels);
         assert!(server.config.downstream_difficulty_config.enable_vardiff);
-    }
-
-    #[test]
-    fn test_sv1_server_non_aggregated_config() {
-        let mut config = create_test_config();
-        config.aggregate_channels = false;
-        config.downstream_difficulty_config.enable_vardiff = false;
-
-        let (cm_sender, _cm_receiver) = unbounded();
-        let (_downstream_sender, cm_receiver) = unbounded();
-        let addr = "127.0.0.1:3333".parse().unwrap();
-
-        let server = Sv1Server::new(addr, cm_receiver, cm_sender, config);
-
-        assert!(!server.config.aggregate_channels);
-        assert!(!server.config.downstream_difficulty_config.enable_vardiff);
     }
 
     #[test]
@@ -1236,7 +1218,6 @@ mod tests {
     async fn test_handle_set_target_without_vardiff_aggregated() {
         let mut config = create_test_config();
         config.downstream_difficulty_config.enable_vardiff = false;
-        config.aggregate_channels = true;
 
         let (cm_sender, _cm_receiver) = unbounded();
         let (_downstream_sender, cm_receiver) = unbounded();
@@ -1258,7 +1239,6 @@ mod tests {
     async fn test_handle_set_target_without_vardiff_non_aggregated() {
         let mut config = create_test_config();
         config.downstream_difficulty_config.enable_vardiff = false;
-        config.aggregate_channels = false;
 
         let (cm_sender, _cm_receiver) = unbounded();
         let (_downstream_sender, cm_receiver) = unbounded();

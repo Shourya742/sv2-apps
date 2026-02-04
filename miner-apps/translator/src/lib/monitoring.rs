@@ -6,7 +6,7 @@
 
 use stratum_apps::monitoring::server::{ServerExtendedChannelInfo, ServerInfo, ServerMonitoring};
 
-use crate::sv2::channel_manager::{data::ChannelMode, ChannelManager};
+use crate::{sv2::channel_manager::ChannelManager, tproxy_mode, TproxyMode};
 
 impl ServerMonitoring for ChannelManager {
     fn get_server(&self) -> ServerInfo {
@@ -15,8 +15,8 @@ impl ServerMonitoring for ChannelManager {
 
         self.channel_manager_data
             .safe_lock(|d| {
-                match d.mode {
-                    ChannelMode::Aggregated => {
+                match tproxy_mode() {
+                    TproxyMode::Aggregated => {
                         // In Aggregated mode: one shared upstream channel to the server
                         if let Some(upstream_channel) = &d.upstream_extended_channel {
                             if let Ok(channel_lock) = upstream_channel.read() {
@@ -45,7 +45,7 @@ impl ServerMonitoring for ChannelManager {
                             }
                         }
                     }
-                    ChannelMode::NonAggregated => {
+                    TproxyMode::NonAggregated => {
                         // In NonAggregated mode: each downstream Sv1 miner has its own upstream Sv2
                         // channel to the server
                         for (_channel_id, extended_channel) in d.extended_channels.iter() {

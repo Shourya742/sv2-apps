@@ -2,7 +2,8 @@ use std::sync::{Arc, RwLock};
 
 use crate::{
     error::{self, TproxyError, TproxyErrorKind},
-    sv2::{channel_manager::ChannelMode, ChannelManager},
+    is_aggregated,
+    sv2::ChannelManager,
     utils::{proxy_extranonce_prefix_len, AGGREGATED_CHANNEL_ID},
 };
 use stratum_apps::{
@@ -130,7 +131,7 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
 
                 // If we are in aggregated mode, we need to create a new extranonce prefix and
                 // insert the extended channel into the map
-                if channel_manager_data.mode == ChannelMode::Aggregated {
+                if is_aggregated() {
                     channel_manager_data.upstream_extended_channel =
                         Some(Arc::new(RwLock::new(extended_channel.clone())));
 
@@ -317,7 +318,7 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
         self.channel_manager_data
             .super_safe_lock(|channel_data_manager| {
                 // are we working in aggregated mode?
-                if channel_data_manager.mode == ChannelMode::Aggregated {
+                if is_aggregated() {
                     // even if aggregated channel_id != m.channel_id, we should trigger fallback
                     // because why would a sane server send a CloseChannel message to a different
                     // channel?
@@ -430,7 +431,7 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
                 let mut new_extended_mining_job_messages = Vec::new();
 
                 // are we in aggregated mode?
-                if channel_manager_data.mode == ChannelMode::Aggregated {
+                if is_aggregated() {
                     let mut aggregated_channel = channel_manager_data
                         .upstream_extended_channel
                         .as_ref()
@@ -618,7 +619,7 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
                     let mut set_new_prev_hash_messages = Vec::new();
                     let mut new_extended_mining_job_messages = Vec::new();
 
-                    if channel_manager_data.mode == ChannelMode::Aggregated {
+                    if is_aggregated() {
                         let aggregated_channel_guard = channel_manager_data
                             .upstream_extended_channel
                             .as_ref()
@@ -878,7 +879,7 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
                     let mut set_target_messages = Vec::new();
 
                     // are in aggregated mode?
-                    if channel_manager_data.mode == ChannelMode::Aggregated {
+                    if is_aggregated() {
                         let aggregated_channel = channel_manager_data
                             .upstream_extended_channel
                             .as_ref()

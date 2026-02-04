@@ -4,6 +4,8 @@ use stratum_apps::{
     utils::types::{ChannelId, DownstreamId, Hashrate},
 };
 
+use crate::{is_aggregated, is_non_aggregated};
+
 #[derive(Debug, Clone)]
 pub struct PendingTargetUpdate {
     pub downstream_id: DownstreamId,
@@ -32,11 +34,11 @@ pub struct Sv1ServerData {
 pub const KEEPALIVE_JOB_ID_DELIMITER: char = '#';
 
 impl Sv1ServerData {
-    pub fn new(aggregate_channels: bool) -> Self {
+    pub fn new() -> Self {
         Self {
             prevhashes: HashMap::new(),
-            aggregated_valid_jobs: aggregate_channels.then(Vec::new),
-            non_aggregated_valid_jobs: (!aggregate_channels).then(HashMap::new),
+            aggregated_valid_jobs: is_aggregated().then(Vec::new),
+            non_aggregated_valid_jobs: is_non_aggregated().then(HashMap::new),
             pending_target_updates: Vec::new(),
             initial_target: None,
         }
@@ -84,5 +86,11 @@ impl Sv1ServerData {
             .iter()
             .find(|j| j.job_id == job_id)
             .cloned()
+    }
+}
+
+impl Default for Sv1ServerData {
+    fn default() -> Self {
+        Self::new()
     }
 }
