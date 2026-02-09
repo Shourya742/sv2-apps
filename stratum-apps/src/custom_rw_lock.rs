@@ -155,3 +155,77 @@ impl<T: ?Sized> Drop for WriteGuard<'_, T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    #[test]
+    fn safe_read_works() {
+        let lock = RwLock::new(42);
+
+        let value = lock.safe_read(|v| *v).unwrap();
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn safe_write_works() {
+        let lock = RwLock::new(1);
+
+        lock.safe_write(|v| {
+            *v += 1;
+        })
+        .unwrap();
+
+        let value = lock.safe_read(|v| *v).unwrap();
+        assert_eq!(value, 2);
+    }
+
+    #[test]
+    fn explicit_read_requires_release() {
+        let lock = RwLock::new(10);
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = lock.read().unwrap();
+        }));
+
+        assert!(
+            result.is_err(),
+            "dropping ReadGuard without release() must panic"
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn explicit_write_requires_release() {
+        let lock = RwLock::new(10);
+        let mut guard = lock.write().unwrap();
+        *guard += 1;
+    }
+
+    #[test]
+    fn explicit_read_with_release_does_not_panic() {
+        let lock = RwLock::new(5);
+
+        let guard = lock.read().unwrap();
+        assert_eq!(*guard, 5);
+        guard.release();
+    }
+
+    #[test]
+    fn explicit_write_with_release_does_not_panic_and_updates() {
+        let lock = RwLock::new(5);
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let mut guard = lock.write().unwrap();
+            *guard = 99;
+            guard.release();
+        }));
+
+        assert!(result.is_ok());
+
+        let value = lock.safe_read(|v| *v).unwrap();
+        assert_eq!(value, 99);
+    }
+}
