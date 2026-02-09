@@ -255,6 +255,18 @@ impl<'a> Sniffer<'a> {
         }
     }
 
+    /// Clears all messages from the specified direction's queue.
+    pub fn clean_queue(&self, message_direction: MessageDirection) {
+        match message_direction {
+            MessageDirection::ToDownstream => {
+                self.messages_from_upstream.clear();
+            }
+            MessageDirection::ToUpstream => {
+                self.messages_from_downstream.clear();
+            }
+        }
+    }
+
     /// Checks whether the sniffer has received a message of the specified type.
     pub fn includes_message_type(
         &self,

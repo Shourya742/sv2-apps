@@ -22,8 +22,8 @@ impl HandleExtensionsFromServerAsync for ChannelManager {
         _server_id: Option<usize>,
     ) -> Result<Vec<u16>, Self::Error> {
         Ok(self
-            .channel_manager_data
-            .super_safe_lock(|data| data.negotiated_extensions.clone()))
+            .negotiated_extensions
+            .super_safe_lock(|data| data.clone()))
     }
 
     async fn handle_request_extensions_success(
@@ -56,11 +56,11 @@ impl HandleExtensionsFromServerAsync for ChannelManager {
         }
 
         // Store the negotiated extensions in the shared channel manager data
-        self.channel_manager_data.super_safe_lock(|data| {
-            data.negotiated_extensions = supported.clone();
+        self.negotiated_extensions.super_safe_lock(|data| {
+            *data = supported;
         });
 
-        info!("Successfully negotiated extensions: {:?}", supported);
+        info!("Successfully negotiated extensions");
 
         Ok(())
     }

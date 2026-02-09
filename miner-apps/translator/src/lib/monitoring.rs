@@ -6,78 +6,74 @@
 
 use stratum_apps::monitoring::server::{ServerExtendedChannelInfo, ServerInfo, ServerMonitoring};
 
-use crate::sv2::channel_manager::{data::ChannelMode, ChannelManager};
+use crate::{sv2::channel_manager::ChannelManager, tproxy_mode, TproxyMode};
 
 impl ServerMonitoring for ChannelManager {
     fn get_server(&self) -> ServerInfo {
         let mut extended_channels = Vec::new();
         let standard_channels = Vec::new(); // tProxy only uses extended channels
 
-        self.channel_manager_data
-            .safe_lock(|d| {
-                match d.mode {
-                    ChannelMode::Aggregated => {
+        match tproxy_mode() {
+            TproxyMode::Aggregated => {
+                self.upstream_extended_channel
+                    .super_safe_lock(|upstream_channel| {
                         // In Aggregated mode: one shared upstream channel to the server
-                        if let Some(upstream_channel) = &d.upstream_extended_channel {
-                            if let Ok(channel_lock) = upstream_channel.read() {
-                                let channel_id = channel_lock.get_channel_id();
-                                let target = channel_lock.get_target();
-                                let extranonce_prefix = channel_lock.get_extranonce_prefix();
-                                let user_identity = channel_lock.get_user_identity();
-                                let share_accounting = channel_lock.get_share_accounting();
+                        if let Some(upstream_channel) = upstream_channel.as_mut() {
+                            let channel_id = upstream_channel.get_channel_id();
+                            let target = upstream_channel.get_target();
+                            let extranonce_prefix = upstream_channel.get_extranonce_prefix();
+                            let user_identity = upstream_channel.get_user_identity();
+                            let share_accounting = upstream_channel.get_share_accounting();
 
-                                extended_channels.push(ServerExtendedChannelInfo {
-                                    channel_id,
-                                    user_identity: user_identity.clone(),
-                                    nominal_hashrate: channel_lock.get_nominal_hashrate(),
-                                    target_hex: hex::encode(target.to_be_bytes()),
-                                    extranonce_prefix_hex: hex::encode(extranonce_prefix),
-                                    full_extranonce_size: channel_lock.get_full_extranonce_size(),
-                                    rollable_extranonce_size: channel_lock
-                                        .get_rollable_extranonce_size(),
-                                    version_rolling: channel_lock.is_version_rolling(),
-                                    shares_accepted: share_accounting.get_shares_accepted(),
-                                    share_work_sum: share_accounting.get_share_work_sum(),
-                                    last_share_sequence_number: share_accounting
-                                        .get_last_share_sequence_number(),
-                                    best_diff: share_accounting.get_best_diff(),
-                                });
-                            }
+                            extended_channels.push(ServerExtendedChannelInfo {
+                                channel_id,
+                                user_identity: user_identity.clone(),
+                                nominal_hashrate: upstream_channel.get_nominal_hashrate(),
+                                target_hex: hex::encode(target.to_be_bytes()),
+                                extranonce_prefix_hex: hex::encode(extranonce_prefix),
+                                full_extranonce_size: upstream_channel.get_full_extranonce_size(),
+                                rollable_extranonce_size: upstream_channel
+                                    .get_rollable_extranonce_size(),
+                                version_rolling: upstream_channel.is_version_rolling(),
+                                shares_accepted: share_accounting.get_shares_accepted(),
+                                share_work_sum: share_accounting.get_share_work_sum(),
+                                last_share_sequence_number: share_accounting
+                                    .get_last_share_sequence_number(),
+                                best_diff: share_accounting.get_best_diff(),
+                            });
                         }
-                    }
-                    ChannelMode::NonAggregated => {
-                        // In NonAggregated mode: each downstream Sv1 miner has its own upstream Sv2
-                        // channel to the server
-                        for (_channel_id, extended_channel) in d.extended_channels.iter() {
-                            if let Ok(channel_lock) = extended_channel.read() {
-                                let channel_id = channel_lock.get_channel_id();
-                                let target = channel_lock.get_target();
-                                let extranonce_prefix = channel_lock.get_extranonce_prefix();
-                                let user_identity = channel_lock.get_user_identity();
-                                let share_accounting = channel_lock.get_share_accounting();
+                    });
+            }
+            TproxyMode::NonAggregated => {
+                // In NonAggregated mode: each downstream Sv1 miner has its own upstream Sv2
+                // channel to the server
+                for channel in self.extended_channels.iter() {
+                    let extended_channel = channel.value();
 
-                                extended_channels.push(ServerExtendedChannelInfo {
-                                    channel_id,
-                                    user_identity: user_identity.clone(),
-                                    nominal_hashrate: channel_lock.get_nominal_hashrate(),
-                                    target_hex: hex::encode(target.to_be_bytes()),
-                                    extranonce_prefix_hex: hex::encode(extranonce_prefix),
-                                    full_extranonce_size: channel_lock.get_full_extranonce_size(),
-                                    rollable_extranonce_size: channel_lock
-                                        .get_rollable_extranonce_size(),
-                                    version_rolling: channel_lock.is_version_rolling(),
-                                    shares_accepted: share_accounting.get_shares_accepted(),
-                                    share_work_sum: share_accounting.get_share_work_sum(),
-                                    last_share_sequence_number: share_accounting
-                                        .get_last_share_sequence_number(),
-                                    best_diff: share_accounting.get_best_diff(),
-                                });
-                            }
-                        }
-                    }
+                    let channel_id = extended_channel.get_channel_id();
+                    let target = extended_channel.get_target();
+                    let extranonce_prefix = extended_channel.get_extranonce_prefix();
+                    let user_identity = extended_channel.get_user_identity();
+                    let share_accounting = extended_channel.get_share_accounting();
+
+                    extended_channels.push(ServerExtendedChannelInfo {
+                        channel_id,
+                        user_identity: user_identity.clone(),
+                        nominal_hashrate: extended_channel.get_nominal_hashrate(),
+                        target_hex: hex::encode(target.to_be_bytes()),
+                        extranonce_prefix_hex: hex::encode(extranonce_prefix),
+                        full_extranonce_size: extended_channel.get_full_extranonce_size(),
+                        rollable_extranonce_size: extended_channel.get_rollable_extranonce_size(),
+                        version_rolling: extended_channel.is_version_rolling(),
+                        shares_accepted: share_accounting.get_shares_accepted(),
+                        share_work_sum: share_accounting.get_share_work_sum(),
+                        last_share_sequence_number: share_accounting
+                            .get_last_share_sequence_number(),
+                        best_diff: share_accounting.get_best_diff(),
+                    });
                 }
-            })
-            .unwrap();
+            }
+        }
 
         ServerInfo {
             extended_channels,

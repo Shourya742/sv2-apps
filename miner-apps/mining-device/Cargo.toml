@@ -22,10 +22,7 @@ path = "src/lib/mod.rs"
 [dependencies]
 stratum-common = { git = "https://github.com/stratum-mining/stratum", rev = "v1.5.0", features = ["with_network_helpers"] }
 async-channel = "1.5.1"
-buffer_sv2 = { git = "https://github.com/stratum-mining/stratum", rev = "v1.5.0" }
-async-recursion = "0.3.2"
 rand = "0.8.4"
-futures = "0.3.5"
 key-utils = { git = "https://github.com/stratum-mining/stratum", rev = "v1.5.0" }
 clap = { version = "^4.5.4", features = ["derive"] }
 tracing = { version = "0.1" }

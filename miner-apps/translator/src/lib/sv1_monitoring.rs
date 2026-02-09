@@ -10,7 +10,7 @@ fn downstream_to_sv1_client_info(downstream: &Downstream) -> Option<Sv1ClientInf
     downstream
         .downstream_data
         .safe_lock(|dd| Sv1ClientInfo {
-            client_id: dd.downstream_id,
+            client_id: downstream.downstream_id,
             channel_id: dd.channel_id,
             authorized_worker_name: dd.authorized_worker_name.clone(),
             user_identity: dd.user_identity.clone(),

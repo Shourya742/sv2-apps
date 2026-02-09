@@ -1114,7 +1114,6 @@ name = "jd_server"
 version = "0.1.3"
 dependencies = [
  "async-channel",
- "buffer_sv2",
  "clap",
  "config",
  "config_helpers_sv2",
@@ -1126,7 +1125,6 @@ dependencies = [
  "rand",
  "rpc_sv2",
  "serde",
- "serde_json",
  "stratum-common",
  "tokio",
  "tracing",

@@ -1,5 +1,4 @@
-use crate::config_helpers::opt_path_from_toml;
-use crate::key_utils::Secp256k1PublicKey;
+use crate::{config_helpers::opt_path_from_toml, key_utils::Secp256k1PublicKey};
 use std::path::PathBuf;
 
 /// Bitcoin network for determining node.sock location

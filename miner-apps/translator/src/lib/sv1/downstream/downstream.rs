@@ -5,7 +5,13 @@ use crate::{
     utils::{ShutdownMessage, AGGREGATED_CHANNEL_ID},
 };
 use async_channel::{Receiver, Sender};
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Instant,
+};
 use stratum_apps::{
     custom_mutex::Mutex,
     stratum_core::{
@@ -36,8 +42,13 @@ use tracing::{debug, error, info, warn};
 /// handling connection-specific state.
 #[derive(Clone, Debug)]
 pub struct Downstream {
+    pub downstream_id: DownstreamId,
     pub downstream_data: Arc<Mutex<DownstreamData>>,
     pub downstream_channel_state: DownstreamChannelState,
+    // Flag to track if SV1 handshake is complete (subscribe + authorize)
+    pub sv1_handshake_complete: Arc<AtomicBool>,
+    // Flag to indicate we're processing queued Sv1 handshake message responses
+    pub processing_queued_sv1_handshake_responses: Arc<AtomicBool>,
 }
 
 #[cfg_attr(not(test), hotpath::measure_all)]
@@ -57,11 +68,7 @@ impl Downstream {
         target: Target,
         hashrate: Option<Hashrate>,
     ) -> Self {
-        let downstream_data = Arc::new(Mutex::new(DownstreamData::new(
-            downstream_id,
-            target,
-            hashrate,
-        )));
+        let downstream_data = Arc::new(Mutex::new(DownstreamData::new(hashrate, target)));
         let downstream_channel_state = DownstreamChannelState::new(
             downstream_sv1_sender,
             downstream_sv1_receiver,
@@ -69,8 +76,11 @@ impl Downstream {
             sv1_server_broadcast,
         );
         Self {
+            downstream_id,
             downstream_data,
             downstream_channel_state,
+            sv1_handshake_complete: Arc::new(AtomicBool::new(false)),
+            processing_queued_sv1_handshake_responses: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -97,7 +107,7 @@ impl Downstream {
             .sv1_server_broadcast
             .subscribe();
         let mut shutdown_rx = notify_shutdown.subscribe();
-        let downstream_id = self.downstream_data.super_safe_lock(|d| d.downstream_id);
+        let downstream_id = self.downstream_id;
         task_manager.spawn(async move {
             loop {
                 tokio::select! {
@@ -185,15 +195,9 @@ impl Downstream {
     ) -> TproxyResult<(), error::Downstream> {
         match sv1_server_receiver.recv().await {
             Ok((channel_id, downstream_id, message)) => {
-                let (my_channel_id, my_downstream_id, handshake_complete) =
-                    self.downstream_data.super_safe_lock(|d| {
-                        (
-                            d.channel_id,
-                            d.downstream_id,
-                            d.sv1_handshake_complete
-                                .load(std::sync::atomic::Ordering::SeqCst),
-                        )
-                    });
+                let my_channel_id = self.downstream_data.super_safe_lock(|d| d.channel_id);
+                let my_downstream_id = self.downstream_id;
+                let handshake_complete = self.sv1_handshake_complete.load(Ordering::SeqCst);
                 let id_matches = (my_channel_id == Some(channel_id)
                     || channel_id == AGGREGATED_CHANNEL_ID)
                     && (downstream_id.is_none() || downstream_id == Some(my_downstream_id));
@@ -202,10 +206,9 @@ impl Downstream {
                 }
 
                 // Check if this is a queued message response
-                let is_queued_sv1_handshake_response = self.downstream_data.super_safe_lock(|d| {
-                    d.processing_queued_sv1_handshake_responses
-                        .load(std::sync::atomic::Ordering::SeqCst)
-                });
+                let is_queued_sv1_handshake_response = self
+                    .processing_queued_sv1_handshake_responses
+                    .load(Ordering::SeqCst);
 
                 // Handle messages based on message type and handshake state
                 if let Message::Notification(notification) = &message {
@@ -349,7 +352,7 @@ impl Downstream {
                 }
             }
             Err(e) => {
-                let downstream_id = self.downstream_data.super_safe_lock(|d| d.downstream_id);
+                let downstream_id = self.downstream_id;
                 error!(
                     "Sv1 message handler error for downstream {}: {:?}",
                     downstream_id, e
@@ -374,9 +377,7 @@ impl Downstream {
     /// Responses are sent back to the miner, while share submissions are forwarded
     /// to the SV1 server for upstream processing.
     pub async fn handle_downstream_message(&self) -> TproxyResult<(), error::Downstream> {
-        let downstream_id = self
-            .downstream_data
-            .super_safe_lock(|data| data.downstream_id);
+        let downstream_id = self.downstream_id;
         let message = match self
             .downstream_channel_state
             .downstream_sv1_receiver
@@ -407,12 +408,12 @@ impl Downstream {
     pub async fn handle_sv1_handshake_completion(&self) -> TproxyResult<(), error::Downstream> {
         let (cached_set_difficulty, cached_notify, downstream_id) =
             self.downstream_data.super_safe_lock(|d| {
-                d.sv1_handshake_complete
+                self.sv1_handshake_complete
                     .store(true, std::sync::atomic::Ordering::SeqCst);
                 (
                     d.cached_set_difficulty.take(),
                     d.cached_notify.take(),
-                    d.downstream_id,
+                    self.downstream_id,
                 )
             });
         debug!("Down: SV1 handshake completed for downstream");

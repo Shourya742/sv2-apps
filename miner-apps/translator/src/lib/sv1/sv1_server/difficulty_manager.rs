@@ -1,4 +1,6 @@
-use crate::sv1::sv1_server::data::PendingTargetUpdate;
+use std::sync::Arc;
+
+use crate::{is_aggregated, is_non_aggregated, sv1::sv1_server::sv1_server::PendingTargetUpdate};
 
 use stratum_apps::{
     stratum_core::{
@@ -27,7 +29,7 @@ impl Sv1Server {
     ///
     /// This method implements the SV1 server's variable difficulty logic for all downstreams.
     /// Every 60 seconds, this method updates the difficulty state for each downstream.
-    pub async fn spawn_vardiff_loop(self) {
+    pub async fn spawn_vardiff_loop(self: Arc<Self>) {
         info!("Variable difficulty adjustment enabled - starting vardiff loop");
 
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -96,9 +98,9 @@ impl Sv1Server {
                     };
                 // Always update the downstream's pending target and hashrate
                 if let Some(d) = self.downstreams.get(downstream_id) {
-                    _ = d.downstream_data.safe_lock(|d| {
-                        d.set_pending_target(new_target);
-                        d.set_pending_hashrate(Some(new_hashrate));
+                    _ = d.downstream_data.safe_lock(|data| {
+                        data.set_pending_target(new_target, d.downstream_id);
+                        data.set_pending_hashrate(Some(new_hashrate), d.downstream_id);
                     });
                 }
                 // All updates will be sent as UpdateChannel messages
@@ -121,8 +123,8 @@ impl Sv1Server {
                                 "⏳ Target comparison: new_target ({:?}) < upstream_target ({:?}) for downstream {}, will delay set_difficulty until SetTarget",
                                 new_target, upstream_target, downstream_id
                             );
-                            self.sv1_server_data.super_safe_lock(|data| {
-                                data.pending_target_updates.push(PendingTargetUpdate {
+                            self.pending_target_updates.super_safe_lock(|data| {
+                                data.push(PendingTargetUpdate {
                                     downstream_id: *downstream_id,
                                     new_target,
                                     new_hashrate,
@@ -184,7 +186,7 @@ impl Sv1Server {
                                                                         * new_target,
                                                                         * new_hashrate) */
     ) {
-        if self.config.aggregate_channels {
+        if is_aggregated() {
             // Aggregated mode: Send single UpdateChannel with minimum target and total hashrate of
             // ALL downstreams
             self.send_aggregated_update_channel(all_updates).await;
@@ -298,7 +300,7 @@ impl Sv1Server {
             set_target.channel_id, new_upstream_target
         );
 
-        if self.config.aggregate_channels {
+        if is_aggregated() {
             return self
                 .handle_aggregated_set_target(new_upstream_target, set_target.channel_id)
                 .await;
@@ -320,7 +322,7 @@ impl Sv1Server {
         for downstream in self.downstreams.iter() {
             let downstream = downstream.value();
             downstream.downstream_data.super_safe_lock(|d| {
-                d.set_upstream_target(new_upstream_target);
+                d.set_upstream_target(new_upstream_target, downstream.downstream_id);
             });
         }
 
@@ -355,12 +357,10 @@ impl Sv1Server {
             return;
         };
 
-        let downstream_id = downstream
-            .downstream_data
-            .super_safe_lock(|d| d.downstream_id);
+        let downstream_id = downstream.downstream_id;
 
         downstream.downstream_data.super_safe_lock(|d| {
-            d.set_upstream_target(new_upstream_target);
+            d.set_upstream_target(new_upstream_target, downstream_id);
         });
 
         trace!("Updated upstream target for downstream {}", downstream_id);
@@ -386,8 +386,8 @@ impl Sv1Server {
     ) -> Vec<PendingTargetUpdate> {
         let mut applicable_updates = Vec::new();
 
-        self.sv1_server_data.super_safe_lock(|data| {
-            data.pending_target_updates.retain(|pending_update| {
+        self.pending_target_updates.super_safe_lock(|data| {
+            data.retain(|pending_update| {
                 // Check if we should process this update
                 let should_process = match downstream_id {
                     Some(downstream_id) => pending_update.downstream_id == downstream_id,
@@ -465,7 +465,7 @@ impl Sv1Server {
     /// (e.g., disconnect). Calculates total hashrate and minimum target among all remaining
     /// downstreams.
     pub async fn send_update_channel_on_downstream_state_change(&self) {
-        if !self.config.aggregate_channels {
+        if is_non_aggregated() {
             return;
         }
 

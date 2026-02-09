@@ -1,14 +1,15 @@
 use stratum_apps::stratum_core::sv1_api::{
-    client_to_server, json_rpc, server_to_client,
+    client_to_server, json_rpc,
+    server_to_client::{self, Notify},
     utils::{Extranonce, HexU32Be},
     IsServer,
 };
 use tracing::{debug, info, warn};
 
 use crate::{
-    error,
+    error, is_aggregated,
     sv1::{downstream::SubmitShareWithChannelId, Sv1Server},
-    utils::validate_sv1_share,
+    utils::{validate_sv1_share, AGGREGATED_CHANNEL_ID},
 };
 
 // Implements `IsServer` for `Sv1Server` to handle the Sv1 messages.
@@ -105,30 +106,29 @@ impl IsServer<'static> for Sv1Server {
 
         let job_id = &request.job_id;
 
-        let channel_id = match downstream
+        let Some(channel_id) = downstream
             .downstream_data
             .super_safe_lock(|data| data.channel_id)
-        {
-            Some(id) => id,
-            None => return false,
+        else {
+            return false;
         };
 
-        let job = self.sv1_server_data.super_safe_lock(|data| {
-            data.aggregated_valid_jobs
-                .as_ref()
-                .and_then(|jobs| jobs.iter().find(|j| &j.job_id == job_id))
-                .or_else(|| {
-                    data.non_aggregated_valid_jobs
-                        .as_ref()
-                        .and_then(|jobs| jobs.get(&channel_id))
-                        .and_then(|jobs| jobs.iter().find(|j| &j.job_id == job_id))
-                })
-                .cloned()
-        });
+        let channel_id = if is_aggregated() {
+            AGGREGATED_CHANNEL_ID
+        } else {
+            channel_id
+        };
 
-        let job = match job {
-            Some(job) => job,
-            None => return false,
+        let find_job =
+            |jobs: &[Notify<'static>]| jobs.iter().find(|j| j.job_id == *job_id).cloned();
+
+        let job = self
+            .valid_sv1_jobs
+            .get(&channel_id)
+            .and_then(|jobs| find_job(jobs.as_ref()));
+
+        let Some(job) = job else {
+            return false;
         };
 
         downstream.downstream_data.super_safe_lock(|data| {
@@ -162,15 +162,15 @@ impl IsServer<'static> for Sv1Server {
                 return false;
             }
 
-            data.pending_share.replace(Some(SubmitShareWithChannelId {
+            data.pending_share = Some(SubmitShareWithChannelId {
                 channel_id,
-                downstream_id: data.downstream_id,
+                downstream_id,
                 share: request.clone(),
                 extranonce: data.extranonce1.clone().into(),
                 extranonce2_len: data.extranonce2_len,
                 version_rolling_mask: data.version_rolling_mask.clone(),
                 job_version: data.last_job_version_field,
-            }));
+            });
 
             true
         })

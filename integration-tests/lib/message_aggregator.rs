@@ -50,6 +50,13 @@ impl MessagesAggregator {
             .unwrap()
     }
 
+    /// Clears all messages from the queue.
+    pub fn clear(&self) {
+        self.messages
+            .safe_lock(|messages| messages.clear())
+            .unwrap();
+    }
+
     /// returns true if contains message_type
     pub fn has_message_type(&self, message_type: u8) -> bool {
         let has_message: bool = self

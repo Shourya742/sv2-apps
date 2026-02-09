@@ -1613,3 +1613,184 @@ async fn translator_does_not_shutdown_on_missing_downstream_channel() {
 
     assert!(TcpListener::bind(tproxy_addr).await.is_err());
 }
+
+/// This test verifies that in aggregated mode, a new downstream connection that arrives
+/// between a future NewExtendedMiningJob and its corresponding SetNewPrevHash will correctly
+/// receive the future job and be able to submit shares after SetNewPrevHash activates the job.
+///
+/// This is a regression test for the "Failed to set new prev hash: JobIdNotFound" error
+/// that occurred when new downstream channels were created while a future job was pending.
+///
+/// See: https://github.com/stratum-mining/sv2-apps/issues/223
+#[tokio::test]
+async fn aggregated_translator_handles_downstream_connecting_during_future_job() {
+    start_tracing();
+
+    let mock_upstream_addr = get_available_address();
+    let mock_upstream = MockUpstream::new(mock_upstream_addr);
+    let send_to_tproxy = mock_upstream.start().await;
+
+    // ignore SubmitSharesSuccess messages to simplify the test flow
+    let ignore_submit_shares_success = IgnoreMessage::new(
+        MessageDirection::ToDownstream,
+        MESSAGE_TYPE_SUBMIT_SHARES_SUCCESS,
+    );
+    let (sniffer, sniffer_addr) = start_sniffer(
+        "future_job_test",
+        mock_upstream_addr,
+        false,
+        vec![ignore_submit_shares_success.into()],
+        None,
+    );
+
+    // Start translator in aggregated mode
+    let (_tproxy, tproxy_addr) =
+        start_sv2_translator(&[sniffer_addr], true, vec![], vec![], None).await;
+
+    sniffer
+        .wait_for_message_type_and_clean_queue(
+            MessageDirection::ToUpstream,
+            MESSAGE_TYPE_SETUP_CONNECTION,
+        )
+        .await;
+
+    let setup_connection_success = AnyMessage::Common(CommonMessages::SetupConnectionSuccess(
+        SetupConnectionSuccess {
+            used_version: 2,
+            flags: 0,
+        },
+    ));
+    send_to_tproxy.send(setup_connection_success).await.unwrap();
+
+    // Keep references to minerd processes and SV1 sniffers so they don't get dropped
+    let mut minerd_vec = Vec::new();
+
+    // Start SV1 sniffer for the first miner
+    let (sv1_sniffer_1, sv1_sniffer_addr_1) = start_sv1_sniffer(tproxy_addr);
+
+    // Start the first minerd (through SV1 sniffer) to trigger OpenExtendedMiningChannel
+    let (minerd_process_1, _minerd_addr_1) =
+        start_minerd(sv1_sniffer_addr_1, None, None, false).await;
+    minerd_vec.push(minerd_process_1);
+
+    sniffer
+        .wait_for_message_type(
+            MessageDirection::ToUpstream,
+            MESSAGE_TYPE_OPEN_EXTENDED_MINING_CHANNEL,
+        )
+        .await;
+
+    let open_extended_mining_channel: OpenExtendedMiningChannel = loop {
+        match sniffer.next_message_from_downstream() {
+            Some((_, AnyMessage::Mining(parsers_sv2::Mining::OpenExtendedMiningChannel(msg)))) => {
+                break msg;
+            }
+            _ => continue,
+        };
+    };
+
+    // Send OpenExtendedMiningChannelSuccess for the aggregated channel
+    let open_extended_mining_channel_success = AnyMessage::Mining(
+        parsers_sv2::Mining::OpenExtendedMiningChannelSuccess(OpenExtendedMiningChannelSuccess {
+            request_id: open_extended_mining_channel.request_id,
+            channel_id: 2, // aggregated channel ID
+            target: hex::decode("0000137c578190689425e3ecf8449a1af39db0aed305d9206f45ac32fe8330fc")
+                .unwrap()
+                .try_into()
+                .unwrap(),
+            // full extranonce has a total of 12 bytes
+            extranonce_size: 8,
+            extranonce_prefix: vec![0x00, 0x01, 0x00, 0x00].try_into().unwrap(),
+            group_channel_id: 1,
+        }),
+    );
+    send_to_tproxy
+        .send(open_extended_mining_channel_success)
+        .await
+        .unwrap();
+
+    sniffer
+        .wait_for_message_type_and_clean_queue(
+            MessageDirection::ToDownstream,
+            MESSAGE_TYPE_OPEN_EXTENDED_MINING_CHANNEL_SUCCESS,
+        )
+        .await;
+
+    // Send a FUTURE job (min_ntime: None) - this job is not active yet!
+    let future_job = AnyMessage::Mining(parsers_sv2::Mining::NewExtendedMiningJob(
+        NewExtendedMiningJob {
+            channel_id: 2,
+            job_id: 1,
+            min_ntime: Sv2Option::new(None), // This makes it a future job!
+            version: 0x20000000,
+            version_rolling_allowed: true,
+            merkle_path: Seq0255::new(vec![]).unwrap(),
+            coinbase_tx_prefix: hex::decode("02000000010000000000000000000000000000000000000000000000000000000000000000ffffffff265200162f5374726174756d2056322053524920506f6f6c2f2f0c").unwrap().try_into().unwrap(),
+            coinbase_tx_suffix: hex::decode("feffffff0200f2052a01000000160014ebe1b7dcc293ccaa0ee743a86f89df8258c208fc0000000000000000266a24aa21a9ede2f61c3f71d1defd3fa999dfa36953755c690689799962b48bebd836974e8cf901000000").unwrap().try_into().unwrap(),
+        },
+    ));
+
+    send_to_tproxy.send(future_job).await.unwrap();
+    sniffer
+        .wait_for_message_type_and_clean_queue(
+            MessageDirection::ToDownstream,
+            MESSAGE_TYPE_NEW_EXTENDED_MINING_JOB,
+        )
+        .await;
+
+    // CRITICAL: Start a SECOND minerd BEFORE sending SetNewPrevHash
+    // This is the race condition we're testing - the new downstream connects
+    // while a future job is pending but not yet activated
+
+    // Start SV1 sniffer for the second miner
+    let (sv1_sniffer_2, sv1_sniffer_addr_2) = start_sv1_sniffer(tproxy_addr);
+
+    let (minerd_process_2, _minerd_addr_2) =
+        start_minerd(sv1_sniffer_addr_2, None, None, false).await;
+    minerd_vec.push(minerd_process_2);
+
+    // Give time for the second minerd to connect and the channel to be created
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // Now send SetNewPrevHash to activate the future job
+    // Without the fix, this would cause "Failed to set new prev hash: JobIdNotFound"
+    // because the second downstream's channel wouldn't have the future job
+    let set_new_prev_hash =
+        AnyMessage::Mining(parsers_sv2::Mining::SetNewPrevHash(SetNewPrevHash {
+            channel_id: 2,
+            job_id: 1,
+            prev_hash: hex::decode(
+                "3ab7089cd2cd30f133552cfde82c4cb239cd3c2310306f9d825e088a1772cc39",
+            )
+            .unwrap()
+            .try_into()
+            .unwrap(),
+            min_ntime: 1766782170,
+            nbits: 0x207fffff,
+        }));
+
+    send_to_tproxy.send(set_new_prev_hash).await.unwrap();
+    sniffer
+        .wait_for_message_type_and_clean_queue(
+            MessageDirection::ToDownstream,
+            MESSAGE_TYPE_MINING_SET_NEW_PREV_HASH,
+        )
+        .await;
+
+    // Verify BOTH miners receive the mining.notify message
+    sv1_sniffer_1
+        .wait_for_message(&["mining.notify"], MessageDirection::ToDownstream)
+        .await;
+    sv1_sniffer_2
+        .wait_for_message(&["mining.notify"], MessageDirection::ToDownstream)
+        .await;
+
+    // Verify BOTH miners submit shares (mining.submit)
+    // This proves both miners are working correctly after the future job was activated
+    sv1_sniffer_1
+        .wait_for_message(&["mining.submit"], MessageDirection::ToUpstream)
+        .await;
+    sv1_sniffer_2
+        .wait_for_message(&["mining.submit"], MessageDirection::ToUpstream)
+        .await;
+}
