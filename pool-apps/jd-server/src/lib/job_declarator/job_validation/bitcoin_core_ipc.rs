@@ -666,9 +666,7 @@ impl JobValidationEngine for BitcoinCoreIPCEngine {
                     custom_job_prev_hash,
                     declared_prev_hash
                 );
-                return SetCustomMiningJobResult::Error(
-                    "invalid-job-param-value-prev-hash".to_string(),
-                );
+                return SetCustomMiningJobResult::Error("stale-chain-tip".to_string());
             }
         }
 
