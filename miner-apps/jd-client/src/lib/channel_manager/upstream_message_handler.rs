@@ -656,16 +656,30 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
 
     // Handles a `SetCustomMiningJobError` from upstream.
     //
-    // Receiving this is treated as malicious behavior, so we immediately
-    // trigger the fallback mechanism.
+    // Most of these errors are treated as malicious behavior and trigger the
+    // fallback mechanism. However, `stale-chain-tip` can
+    // happen during benign JD races when the chain tip changes between
+    // declaration and custom job submission, so it is treated as non-fatal.
     async fn handle_set_custom_mining_job_error(
         &mut self,
         _server_id: Option<usize>,
         msg: SetCustomMiningJobError<'_>,
         _tlv_fields: Option<&[Tlv]>,
     ) -> Result<(), Self::Error> {
-        warn!("⚠️ Received: {} ❌", msg);
-        warn!("⚠️ Starting fallback mechanism.");
+        warn!("Received: {}", msg);
+
+        let error_code = msg.error_code.as_utf8_or_hex();
+        if error_code == "stale-chain-tip" {
+            warn!(
+                "Received non-fatal SetCustomMiningJobError from upstream: stale-chain-tip (request_id={})",
+                msg.request_id
+            );
+            return Ok(());
+        }
+
+        warn!(
+            "⚠️ Upstream rejected the custom job with a SetCustomMiningJobError ❌. Starting fallback mechanism."
+        );
         Err(JDCError::fallback(JDCErrorKind::CustomJobError))
     }
 
