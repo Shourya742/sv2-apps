@@ -593,9 +593,6 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
 
             let template_id = last_declare_job.template.template_id;
 
-            data.last_declare_job_store
-                .retain(|_, job| job.template.template_id != template_id);
-
             data.template_id_to_upstream_job_id
                 .insert(template_id, msg.job_id);
 
