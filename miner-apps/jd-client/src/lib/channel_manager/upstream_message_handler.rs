@@ -671,6 +671,12 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
                 "Received non-fatal SetCustomMiningJobError from upstream: stale-chain-tip (request_id={})",
                 msg.request_id
             );
+            self.channel_manager_data.super_safe_lock(|data| {
+                if let Some(declared_job) = data.last_declare_job_store.remove(&msg.request_id) {
+                    data.cached_shares
+                        .remove(&declared_job.template.template_id);
+                }
+            });
             return Ok(());
         }
 
