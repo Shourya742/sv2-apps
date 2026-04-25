@@ -516,7 +516,7 @@ impl ChannelManager {
                     info!("Channel Manager: received shutdown while waiting for templates");
                     return Ok(());
                 }
-                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+                _ = task_manager.sleep(std::time::Duration::from_millis(100)) => {}
             }
         }
 

@@ -190,13 +190,14 @@ impl TokenManager {
         let allocated_token_timeout = Duration::from_secs(ALLOCATED_TOKEN_TIMEOUT_SECS);
         let active_token_timeout = Duration::from_secs(ACTIVE_TOKEN_TIMEOUT_SECS);
         let janitor_interval = Duration::from_secs(JANITOR_INTERVAL_SECS);
+        let task_manager = self.task_manager.clone();
         self.task_manager.spawn(async move {
             loop {
                 tokio::select! {
                     _ = cancellation_token.cancelled() => {
                         break;
                     }
-                    _ = tokio::time::sleep(janitor_interval) => {
+                    _ = task_manager.sleep(janitor_interval) => {
                         // Avoid removing while iterating the same DashMap, which can block.
                         let now = Instant::now();
 

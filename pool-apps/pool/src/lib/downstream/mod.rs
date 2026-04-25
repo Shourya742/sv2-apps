@@ -209,7 +209,7 @@ impl Downstream {
 
             // sleep to make sure SetupConnectionError is sent
             // before we break the TCP connection
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            task_manager.sleep(std::time::Duration::from_secs(1)).await;
 
             _ = self.handle_error_action(
                 "Downstream::setup_connection_with_downstream",

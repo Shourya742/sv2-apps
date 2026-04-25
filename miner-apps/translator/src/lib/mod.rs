@@ -22,6 +22,7 @@ use std::{
 };
 use stratum_apps::{
     fallback_coordinator::FallbackCoordinator,
+    runtime::{RuntimeHandle, TokioRuntime},
     task_manager::TaskManager,
     utils::types::{Sv2Frame, GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS},
 };
@@ -57,6 +58,7 @@ pub mod utils;
 #[derive(Clone)]
 pub struct TranslatorSv2 {
     config: TranslatorConfig,
+    runtime: RuntimeHandle,
     cancellation_token: CancellationToken,
     shutdown_notify: Arc<Notify>,
     is_alive: Arc<AtomicBool>,
@@ -69,8 +71,13 @@ impl TranslatorSv2 {
     /// Initializes the translator with the given configuration and sets up
     /// the reconnect wait time.
     pub fn new(config: TranslatorConfig) -> Self {
+        Self::new_with_runtime(config, TokioRuntime::handle())
+    }
+
+    pub fn new_with_runtime(config: TranslatorConfig, runtime: RuntimeHandle) -> Self {
         Self {
             config,
+            runtime,
             cancellation_token: CancellationToken::new(),
             shutdown_notify: Arc::new(Notify::new()),
             is_alive: Arc::new(AtomicBool::new(true)),
@@ -88,7 +95,7 @@ impl TranslatorSv2 {
         let mut fallback_coordinator = FallbackCoordinator::new();
         let tproxy_mode = TproxyMode::from(self.config.aggregate_channels);
 
-        let task_manager = Arc::new(TaskManager::new());
+        let task_manager = Arc::new(TaskManager::with_runtime(self.runtime.clone()));
         let (status_sender, status_receiver) = async_channel::unbounded::<Status>();
 
         let (channel_manager_to_upstream_sender, channel_manager_to_upstream_receiver) =
@@ -460,7 +467,7 @@ impl TranslatorSv2 {
             );
             for attempt in 1..=MAX_RETRIES {
                 info!("Connection attempt {}/{}...", attempt, MAX_RETRIES);
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                task_manager.sleep(Duration::from_secs(1)).await;
 
                 match try_initialize_upstream(
                     upstream_entry,

@@ -10,6 +10,7 @@ use async_channel::unbounded;
 
 use bitcoin_core_sv2::template_distribution_protocol::CancellationToken;
 use stratum_apps::{
+    runtime::{RuntimeHandle, TokioRuntime},
     stratum_core::bitcoin::consensus::Encodable, task_manager::TaskManager,
     tp_type::TemplateProviderType, utils::types::GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS,
 };
@@ -44,6 +45,7 @@ pub mod utils;
 #[derive(Debug, Clone)]
 pub struct PoolSv2 {
     config: PoolConfig,
+    runtime: RuntimeHandle,
     cancellation_token: CancellationToken,
     shutdown_notify: Arc<Notify>,
     is_alive: Arc<AtomicBool>,
@@ -52,8 +54,13 @@ pub struct PoolSv2 {
 #[cfg_attr(not(test), hotpath::measure_all)]
 impl PoolSv2 {
     pub fn new(config: PoolConfig) -> Self {
+        Self::new_with_runtime(config, TokioRuntime::handle())
+    }
+
+    pub fn new_with_runtime(config: PoolConfig, runtime: RuntimeHandle) -> Self {
         Self {
             config,
+            runtime,
             cancellation_token: CancellationToken::new(),
             shutdown_notify: Arc::new(Notify::new()),
             is_alive: Arc::new(AtomicBool::new(true)),
@@ -71,7 +78,7 @@ impl PoolSv2 {
 
         let cancellation_token = self.cancellation_token.clone();
 
-        let task_manager = Arc::new(TaskManager::new());
+        let task_manager = Arc::new(TaskManager::with_runtime(self.runtime.clone()));
 
         let (downstream_to_channel_manager_sender, downstream_to_channel_manager_receiver) =
             unbounded();

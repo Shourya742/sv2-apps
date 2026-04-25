@@ -11,6 +11,7 @@ use async_channel::{unbounded, Receiver, Sender};
 use bitcoin_core_sv2::template_distribution_protocol::CancellationToken;
 use stratum_apps::{
     fallback_coordinator::FallbackCoordinator,
+    runtime::{RuntimeHandle, TokioRuntime},
     stratum_core::{bitcoin::consensus::Encodable, parsers_sv2::JobDeclaration},
     task_manager::TaskManager,
     tp_type::TemplateProviderType,
@@ -50,6 +51,7 @@ pub mod utils;
 #[derive(Clone)]
 pub struct JobDeclaratorClient {
     config: JobDeclaratorClientConfig,
+    runtime: RuntimeHandle,
     cancellation_token: CancellationToken,
     shutdown_notify: Arc<Notify>,
     is_alive: Arc<AtomicBool>,
@@ -59,8 +61,13 @@ pub struct JobDeclaratorClient {
 impl JobDeclaratorClient {
     /// Creates a new [`JobDeclaratorClient`] instance.
     pub fn new(config: JobDeclaratorClientConfig) -> Self {
+        Self::new_with_runtime(config, TokioRuntime::handle())
+    }
+
+    pub fn new_with_runtime(config: JobDeclaratorClientConfig, runtime: RuntimeHandle) -> Self {
         Self {
             config,
+            runtime,
             cancellation_token: CancellationToken::new(),
             shutdown_notify: Arc::new(Notify::new()),
             is_alive: Arc::new(AtomicBool::new(true)),
@@ -83,7 +90,7 @@ impl JobDeclaratorClient {
             .expect("Invalid coinbase output in config");
 
         let mut fallback_coordinator = FallbackCoordinator::new();
-        let task_manager = Arc::new(TaskManager::new());
+        let task_manager = Arc::new(TaskManager::with_runtime(self.runtime.clone()));
 
         let (channel_manager_to_upstream_sender, channel_manager_to_upstream_receiver) =
             unbounded();
@@ -602,7 +609,7 @@ impl JobDeclaratorClient {
                     info!("Shutdown requested while waiting to initialize upstream, aborting retries");
                     return Err(JDCErrorKind::CouldNotInitiateSystem);
                 }
-                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                _ = task_manager.sleep(Duration::from_secs(1)) => {}
             }
 
             if upstream_entry.tried_or_flagged {
@@ -648,7 +655,7 @@ impl JobDeclaratorClient {
                                 info!("Shutdown requested after upstream initialization failure, aborting retries");
                                 return Err(JDCErrorKind::CouldNotInitiateSystem);
                             }
-                            _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                            _ = task_manager.sleep(Duration::from_secs(1)) => {}
                         }
 
                         warn!(

@@ -1,13 +1,15 @@
-use std::sync::Mutex as StdMutex;
-use tokio::task::JoinHandle;
+use std::{future::Future, sync::Mutex as StdMutex, time::Duration};
 
-/// Manages a collection of spawned tokio tasks.
+use crate::runtime::{BoxFuture, RuntimeHandle, RuntimeTask, TokioRuntime};
+
+/// Manages a collection of spawned runtime tasks.
 ///
 /// This struct provides a centralized way to spawn, track, and manage the lifecycle
-/// of async tasks in the translator. It maintains a list of join handles that can
+/// of async tasks in the apps. It maintains a list of task handles that can
 /// be used to wait for all tasks to complete or abort them during shutdown.
 pub struct TaskManager {
-    tasks: StdMutex<Vec<JoinHandle<()>>>,
+    runtime: RuntimeHandle,
+    tasks: StdMutex<Vec<Box<dyn RuntimeTask>>>,
 }
 
 impl Default for TaskManager {
@@ -19,11 +21,22 @@ impl Default for TaskManager {
 impl TaskManager {
     /// Creates a new TaskManager instance.
     ///
-    /// Initializes an empty task manager ready to spawn and track tasks.
+    /// Initializes an empty task manager backed by Tokio.
     pub fn new() -> Self {
+        Self::with_runtime(TokioRuntime::handle())
+    }
+
+    /// Creates a new TaskManager backed by an injected runtime.
+    pub fn with_runtime(runtime: RuntimeHandle) -> Self {
         Self {
+            runtime,
             tasks: StdMutex::new(Vec::new()),
         }
+    }
+
+    /// Returns the runtime used by this task manager.
+    pub fn runtime(&self) -> RuntimeHandle {
+        self.runtime.clone()
     }
 
     /// Spawns a new async task and adds it to the managed collection.
@@ -36,7 +49,7 @@ impl TaskManager {
     #[track_caller]
     pub fn spawn<F>(&self, fut: F)
     where
-        F: std::future::Future<Output = ()> + Send + 'static,
+        F: Future<Output = ()> + Send + 'static,
     {
         use tracing::Instrument;
         let location = std::panic::Location::caller();
@@ -47,10 +60,15 @@ impl TaskManager {
             column = location.column(),
         );
 
-        let handle = tokio::spawn(fut.instrument(span));
+        let handle = self.runtime.spawn(Box::pin(fut.instrument(span)));
         let mut tasks = self.tasks.lock().unwrap();
-        tasks.retain(|h| !h.is_finished());
+        tasks.retain(|task| !task.is_finished());
         tasks.push(handle);
+    }
+
+    /// Sleeps using the runtime attached to this task manager.
+    pub fn sleep(&self, duration: Duration) -> BoxFuture<()> {
+        self.runtime.sleep(duration)
     }
 
     /// Waits for all managed tasks to complete.
@@ -65,7 +83,7 @@ impl TaskManager {
         };
 
         for handle in handles {
-            let _ = handle.await;
+            handle.join().await;
         }
     }
 
@@ -75,8 +93,8 @@ impl TaskManager {
     /// manager. The tasks will be terminated without waiting for them to complete.
     pub async fn abort_all(&self) {
         let mut tasks = self.tasks.lock().unwrap();
-        for handle in tasks.drain(..) {
-            handle.abort();
+        for task in tasks.drain(..) {
+            task.abort();
         }
     }
 }

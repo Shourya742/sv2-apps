@@ -200,7 +200,7 @@ impl Sv2Tp {
 
             if attempt < MAX_RETRIES {
                 debug!(attempt, "Retrying connection after backoff");
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                task_manager.sleep(std::time::Duration::from_secs(2)).await;
             }
         }
 

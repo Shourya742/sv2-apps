@@ -239,7 +239,7 @@ impl Sv1Server {
 
         let vardiff_future = self.clone().spawn_vardiff_loop();
 
-        let keepalive_future = self.clone().spawn_job_keepalive_loop();
+        let keepalive_future = self.clone().spawn_job_keepalive_loop(task_manager.clone());
 
         let listener = TcpListener::bind(self.listener_addr).await.map_err(|e| {
             error!("Failed to bind to {}: {}", self.listener_addr, e);
@@ -1149,7 +1149,7 @@ impl Sv1Server {
     ///
     /// This prevents SV1 miners from timing out when there are no new jobs received from the
     /// upstream for a while.
-    pub async fn spawn_job_keepalive_loop(self: Arc<Self>) {
+    pub async fn spawn_job_keepalive_loop(self: Arc<Self>, task_manager: Arc<TaskManager>) {
         let keepalive_interval_secs = self
             .config
             .downstream_difficulty_config
@@ -1164,7 +1164,7 @@ impl Sv1Server {
         );
 
         loop {
-            tokio::time::sleep(check_interval).await;
+            task_manager.sleep(check_interval).await;
             let keepalive_targets: Vec<(DownstreamId, Option<ChannelId>)> = self
                 .downstreams
                 .iter()
