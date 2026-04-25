@@ -6,12 +6,15 @@ use std::{
     sync::{Arc, Mutex as StdMutex},
     time::Duration,
 };
-use stratum_apps::runtime::{BoxFuture, Runtime, RuntimeHandle, RuntimeTask};
+use stratum_apps::runtime::{BoxFuture, LocalFutureFactory, Runtime, RuntimeHandle, RuntimeTask};
 use tokio::sync::Notify;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeEventKind {
     Spawn,
+    SpawnLocal {
+        name: String,
+    },
     Sleep {
         deadline_ms: u128,
     },
@@ -125,6 +128,22 @@ impl Runtime for SeededRuntime {
         })
     }
 
+    fn spawn_local(&self, name: String, fut: LocalFutureFactory) -> Box<dyn RuntimeTask> {
+        self.record(RuntimeEventKind::SpawnLocal { name: name.clone() });
+        let handle = std::thread::Builder::new().name(name).spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to create seeded local runtime");
+            let local_set = tokio::task::LocalSet::new();
+            local_set.block_on(&rt, fut());
+        });
+
+        Box::new(SeededThreadTask {
+            handle: StdMutex::new(handle.ok()),
+        })
+    }
+
     fn sleep(&self, duration: Duration) -> BoxFuture<()> {
         let state = self.state.clone();
         let deadline_ms = self.now_ms() + duration.as_millis();
@@ -145,6 +164,32 @@ impl Runtime for SeededRuntime {
                     return;
                 }
                 state.notify.notified().await;
+            }
+        })
+    }
+}
+
+struct SeededThreadTask {
+    handle: StdMutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+impl RuntimeTask for SeededThreadTask {
+    fn is_finished(&self) -> bool {
+        self.handle
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|handle| handle.is_finished())
+            .unwrap_or(true)
+    }
+
+    fn abort(&self) {}
+
+    fn join(self: Box<Self>) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
+        Box::pin(async move {
+            let handle = self.handle.lock().unwrap().take();
+            if let Some(handle) = handle {
+                let _ = tokio::task::spawn_blocking(move || handle.join()).await;
             }
         })
     }
@@ -210,6 +255,27 @@ mod tests {
         task_manager.join_all().await;
 
         assert!(*slept.lock().unwrap());
+    }
+
+    #[tokio::test]
+    async fn local_runtime_tasks_are_tracked() {
+        let runtime = SeededRuntime::new(42);
+        let task_manager = TaskManager::with_runtime(runtime.runtime_handle());
+
+        let completed = Arc::new(StdMutex::new(false));
+        let completed_clone = completed.clone();
+        task_manager.spawn_local("local-test", move || async move {
+            *completed_clone.lock().unwrap() = true;
+        });
+        task_manager.join_all().await;
+
+        assert!(*completed.lock().unwrap());
+        assert!(runtime.events().iter().any(|event| {
+            matches!(
+                &event.kind,
+                RuntimeEventKind::SpawnLocal { name } if name == "local-test"
+            )
+        }));
     }
 
     #[test]

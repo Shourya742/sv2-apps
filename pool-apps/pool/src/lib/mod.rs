@@ -3,7 +3,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    thread::JoinHandle,
 };
 
 use async_channel::unbounded;
@@ -104,6 +103,7 @@ impl PoolSv2 {
                             network.clone(),
                             data_dir.clone(),
                             cancellation_token.clone(),
+                            task_manager.clone(),
                         )
                         .await?,
                     ),
@@ -197,8 +197,6 @@ impl PoolSv2 {
         }
 
         let channel_manager_clone = channel_manager.clone();
-        let mut bitcoin_core_sv2_join_handle: Option<JoinHandle<()>> = None;
-
         match self.config.template_provider_type().clone() {
             TemplateProviderType::Sv2Tp {
                 address,
@@ -250,14 +248,12 @@ impl PoolSv2 {
                     cancellation_token: CancellationToken::new(),
                 };
 
-                bitcoin_core_sv2_join_handle = Some(
-                    connect_to_bitcoin_core(
-                        bitcoin_core_config,
-                        cancellation_token.clone(),
-                        task_manager.clone(),
-                    )
-                    .await,
-                );
+                connect_to_bitcoin_core(
+                    bitcoin_core_config,
+                    cancellation_token.clone(),
+                    task_manager.clone(),
+                )
+                .await;
             }
         }
 
@@ -294,14 +290,6 @@ impl PoolSv2 {
         if let Some(ref jd) = job_declarator_for_shutdown {
             info!("Shutting down embedded JDS...");
             jd.shutdown();
-        }
-
-        if let Some(bitcoin_core_sv2_join_handle) = bitcoin_core_sv2_join_handle {
-            info!("Waiting for BitcoinCoreSv2TDP dedicated thread to shutdown...");
-            match bitcoin_core_sv2_join_handle.join() {
-                Ok(_) => info!("BitcoinCoreSv2TDP dedicated thread shutdown complete."),
-                Err(e) => error!("BitcoinCoreSv2TDP dedicated thread error: {e:?}"),
-            }
         }
 
         warn!(

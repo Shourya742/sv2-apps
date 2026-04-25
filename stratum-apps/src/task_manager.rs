@@ -66,6 +66,24 @@ impl TaskManager {
         tasks.push(handle);
     }
 
+    /// Spawns a non-`Send` future on a dedicated local runtime owned by this task manager.
+    ///
+    /// This is intended for dependencies such as Cap'n Proto clients that require
+    /// `tokio::task::LocalSet`. The task is still tracked and joined by `TaskManager`.
+    #[track_caller]
+    pub fn spawn_local<F, Fut>(&self, name: impl Into<String>, fut: F)
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + 'static,
+    {
+        let handle = self
+            .runtime
+            .spawn_local(name.into(), Box::new(move || Box::pin(fut())));
+        let mut tasks = self.tasks.lock().unwrap();
+        tasks.retain(|task| !task.is_finished());
+        tasks.push(handle);
+    }
+
     /// Sleeps using the runtime attached to this task manager.
     pub fn sleep(&self, duration: Duration) -> BoxFuture<()> {
         self.runtime.sleep(duration)
