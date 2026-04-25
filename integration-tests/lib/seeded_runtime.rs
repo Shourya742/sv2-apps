@@ -1,15 +1,18 @@
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::{
     fmt,
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex as StdMutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex as StdMutex, Weak,
+    },
+    task::{Context, Poll, Wake, Waker},
     time::Duration,
 };
 use stratum_apps::runtime::{BoxFuture, LocalFutureFactory, Runtime, RuntimeHandle, RuntimeTask};
-use tokio::sync::Notify;
 
 pub const SEED_ENV_VAR: &str = "SV2_SIM_SEED";
 const DEFAULT_SEED: u64 = 0x5356_325f_5349_4d31;
@@ -46,14 +49,23 @@ pub struct RuntimeEvent {
     pub kind: RuntimeEventKind,
 }
 
-#[derive(Debug)]
 struct SeededRuntimeState {
     now_ms: StdMutex<u128>,
     next_event_id: StdMutex<u64>,
     events: StdMutex<Vec<RuntimeEvent>>,
-    notify: Notify,
+    sleepers: StdMutex<Vec<Sleeper>>,
     rng: StdMutex<StdRng>,
     sleep_mode: SleepMode,
+}
+
+#[derive(Clone)]
+struct Sleeper {
+    deadline_ms: u128,
+    waker: Waker,
+}
+
+struct ExecutorState {
+    ready: StdMutex<VecDeque<Arc<SeededTaskState>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +79,7 @@ pub struct SeededRuntime {
     base_seed: u64,
     seed: u64,
     state: Arc<SeededRuntimeState>,
+    executor: Arc<ExecutorState>,
 }
 
 impl fmt::Debug for SeededRuntime {
@@ -107,9 +120,12 @@ impl SeededRuntime {
                 now_ms: StdMutex::new(0),
                 next_event_id: StdMutex::new(0),
                 events: StdMutex::new(Vec::new()),
-                notify: Notify::new(),
+                sleepers: StdMutex::new(Vec::new()),
                 rng: StdMutex::new(StdRng::seed_from_u64(seed)),
                 sleep_mode,
+            }),
+            executor: Arc::new(ExecutorState {
+                ready: StdMutex::new(VecDeque::new()),
             }),
         })
     }
@@ -159,8 +175,23 @@ impl SeededRuntime {
     }
 
     pub fn advance(&self, duration: Duration) {
-        *self.state.now_ms.lock().unwrap() += duration.as_millis();
-        self.state.notify.notify_waiters();
+        let now_ms = {
+            let mut now_ms = self.state.now_ms.lock().unwrap();
+            *now_ms += duration.as_millis();
+            *now_ms
+        };
+        wake_ready_sleepers(&self.state, now_ms);
+    }
+
+    pub fn block_on<F>(&self, future: F) -> F::Output
+    where
+        F: Future,
+    {
+        block_on_with_executor(&self.executor, future)
+    }
+
+    pub fn run_until_stalled(&self) {
+        while poll_ready_task(&self.executor) {}
     }
 
     pub fn choose_index(&self, label: impl Into<String>, len: usize) -> Option<usize> {
@@ -185,20 +216,14 @@ impl SeededRuntime {
 impl Runtime for SeededRuntime {
     fn spawn(&self, fut: BoxFuture<()>) -> Box<dyn RuntimeTask> {
         self.record(RuntimeEventKind::Spawn);
-        Box::new(SeededTask {
-            handle: StdMutex::new(Some(tokio::spawn(fut))),
-        })
+        Box::new(SeededTask::spawn(self.executor.clone(), fut))
     }
 
     fn spawn_local(&self, name: String, fut: LocalFutureFactory) -> Box<dyn RuntimeTask> {
         self.record(RuntimeEventKind::SpawnLocal { name: name.clone() });
+        let executor = self.executor.clone();
         let handle = std::thread::Builder::new().name(name).spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("failed to create seeded local runtime");
-            let local_set = tokio::task::LocalSet::new();
-            local_set.block_on(&rt, fut());
+            block_on_with_executor(&executor, fut());
         });
 
         Box::new(SeededThreadTask {
@@ -210,33 +235,10 @@ impl Runtime for SeededRuntime {
         let state = self.state.clone();
         let deadline_ms = self.now_ms() + duration.as_millis();
         self.record(RuntimeEventKind::Sleep { deadline_ms });
-
-        if state.sleep_mode == SleepMode::AutoAdvance {
-            return Box::pin(async move {
-                {
-                    let mut now_ms = state.now_ms.lock().unwrap();
-                    if *now_ms < deadline_ms {
-                        *now_ms = deadline_ms;
-                    }
-                }
-                state.notify.notify_waiters();
-                tokio::task::yield_now().await;
-                record_event(&state, RuntimeEventKind::Wake { deadline_ms });
-            });
-        }
-
-        Box::pin(async move {
-            loop {
-                let ready = {
-                    let now_ms = *state.now_ms.lock().unwrap();
-                    now_ms >= deadline_ms
-                };
-                if ready {
-                    record_event(&state, RuntimeEventKind::Wake { deadline_ms });
-                    return;
-                }
-                state.notify.notified().await;
-            }
+        Box::pin(SeededSleep {
+            state,
+            deadline_ms,
+            registered: false,
         })
     }
 }
@@ -322,6 +324,195 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
+struct SeededSleep {
+    state: Arc<SeededRuntimeState>,
+    deadline_ms: u128,
+    registered: bool,
+}
+
+impl Future for SeededSleep {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.state.sleep_mode == SleepMode::AutoAdvance {
+            let now_ms = {
+                let mut now_ms = self.state.now_ms.lock().unwrap();
+                if *now_ms < self.deadline_ms {
+                    *now_ms = self.deadline_ms;
+                }
+                *now_ms
+            };
+            wake_ready_sleepers(&self.state, now_ms);
+            record_event(
+                &self.state,
+                RuntimeEventKind::Wake {
+                    deadline_ms: self.deadline_ms,
+                },
+            );
+            return Poll::Ready(());
+        }
+
+        let ready = *self.state.now_ms.lock().unwrap() >= self.deadline_ms;
+        if ready {
+            record_event(
+                &self.state,
+                RuntimeEventKind::Wake {
+                    deadline_ms: self.deadline_ms,
+                },
+            );
+            return Poll::Ready(());
+        }
+
+        if !self.registered {
+            self.state.sleepers.lock().unwrap().push(Sleeper {
+                deadline_ms: self.deadline_ms,
+                waker: cx.waker().clone(),
+            });
+            self.registered = true;
+        }
+        Poll::Pending
+    }
+}
+
+fn wake_ready_sleepers(state: &SeededRuntimeState, now_ms: u128) {
+    let ready = {
+        let mut sleepers = state.sleepers.lock().unwrap();
+        let mut ready = Vec::new();
+        let mut pending = Vec::new();
+        for sleeper in sleepers.drain(..) {
+            if sleeper.deadline_ms <= now_ms {
+                ready.push(sleeper.waker);
+            } else {
+                pending.push(sleeper);
+            }
+        }
+        *sleepers = pending;
+        ready
+    };
+
+    for waker in ready {
+        waker.wake();
+    }
+}
+
+struct NoopWake;
+
+impl Wake for NoopWake {
+    fn wake(self: Arc<Self>) {}
+}
+
+fn noop_waker() -> Waker {
+    Waker::from(Arc::new(NoopWake))
+}
+
+fn block_on_with_executor<F>(executor: &Arc<ExecutorState>, future: F) -> F::Output
+where
+    F: Future,
+{
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    let mut future = std::pin::pin!(future);
+
+    loop {
+        if let Poll::Ready(output) = future.as_mut().poll(&mut cx) {
+            return output;
+        }
+
+        if !poll_ready_task(executor) {
+            std::thread::yield_now();
+        }
+    }
+}
+
+fn poll_ready_task(executor: &ExecutorState) -> bool {
+    let Some(task) = executor.ready.lock().unwrap().pop_front() else {
+        return false;
+    };
+
+    task.poll();
+    true
+}
+
+struct SeededTaskState {
+    future: StdMutex<Option<BoxFuture<()>>>,
+    executor: Weak<ExecutorState>,
+    finished: AtomicBool,
+    aborted: AtomicBool,
+    join_wakers: StdMutex<Vec<Waker>>,
+}
+
+impl SeededTaskState {
+    fn schedule(self: &Arc<Self>) {
+        if self.finished.load(Ordering::SeqCst) || self.aborted.load(Ordering::SeqCst) {
+            return;
+        }
+
+        if let Some(executor) = self.executor.upgrade() {
+            executor.ready.lock().unwrap().push_back(self.clone());
+        }
+    }
+
+    fn poll(self: Arc<Self>) {
+        if self.aborted.load(Ordering::SeqCst) {
+            *self.future.lock().unwrap() = None;
+            self.finish();
+            return;
+        }
+
+        let Some(mut future) = self.future.lock().unwrap().take() else {
+            self.finish();
+            return;
+        };
+
+        let waker = Waker::from(self.clone());
+        let mut cx = Context::from_waker(&waker);
+        match future.as_mut().poll(&mut cx) {
+            Poll::Ready(()) => self.finish(),
+            Poll::Pending => {
+                *self.future.lock().unwrap() = Some(future);
+            }
+        }
+    }
+
+    fn finish(&self) {
+        if self.finished.swap(true, Ordering::SeqCst) {
+            return;
+        }
+
+        for waker in self.join_wakers.lock().unwrap().drain(..) {
+            waker.wake();
+        }
+    }
+}
+
+impl Wake for SeededTaskState {
+    fn wake(self: Arc<Self>) {
+        self.schedule();
+    }
+}
+
+struct SeededJoin {
+    task: Arc<SeededTaskState>,
+}
+
+impl Future for SeededJoin {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.task.finished.load(Ordering::SeqCst) {
+            return Poll::Ready(());
+        }
+
+        self.task
+            .join_wakers
+            .lock()
+            .unwrap()
+            .push(cx.waker().clone());
+        self.task.schedule();
+        Poll::Pending
+    }
+}
+
 struct SeededThreadTask {
     handle: StdMutex<Option<std::thread::JoinHandle<()>>>,
 }
@@ -342,39 +533,42 @@ impl RuntimeTask for SeededThreadTask {
         Box::pin(async move {
             let handle = self.handle.lock().unwrap().take();
             if let Some(handle) = handle {
-                let _ = tokio::task::spawn_blocking(move || handle.join()).await;
+                let _ = handle.join();
             }
         })
     }
 }
 
 struct SeededTask {
-    handle: StdMutex<Option<tokio::task::JoinHandle<()>>>,
+    task: Arc<SeededTaskState>,
+}
+
+impl SeededTask {
+    fn spawn(executor: Arc<ExecutorState>, future: BoxFuture<()>) -> Self {
+        let task = Arc::new(SeededTaskState {
+            future: StdMutex::new(Some(future)),
+            executor: Arc::downgrade(&executor),
+            finished: AtomicBool::new(false),
+            aborted: AtomicBool::new(false),
+            join_wakers: StdMutex::new(Vec::new()),
+        });
+        executor.ready.lock().unwrap().push_back(task.clone());
+        Self { task }
+    }
 }
 
 impl RuntimeTask for SeededTask {
     fn is_finished(&self) -> bool {
-        self.handle
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map(|handle| handle.is_finished())
-            .unwrap_or(true)
+        self.task.finished.load(Ordering::SeqCst)
     }
 
     fn abort(&self) {
-        if let Some(handle) = self.handle.lock().unwrap().as_ref() {
-            handle.abort();
-        }
+        self.task.aborted.store(true, Ordering::SeqCst);
+        self.task.schedule();
     }
 
     fn join(self: Box<Self>) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
-        Box::pin(async move {
-            let handle = self.handle.lock().unwrap().take();
-            if let Some(handle) = handle {
-                let _ = handle.await;
-            }
-        })
+        Box::pin(SeededJoin { task: self.task })
     }
 }
 
@@ -389,23 +583,20 @@ mod tests {
         let runtime = SeededRuntime::manual("manual-test", 42, 42);
         let task_manager = Arc::new(TaskManager::with_runtime(runtime.runtime_handle()));
 
-        let (sleep_started_sender, sleep_started_receiver) = tokio::sync::oneshot::channel();
         let slept = Arc::new(StdMutex::new(false));
         let slept_clone = slept.clone();
         let sleep_task_manager = task_manager.clone();
         task_manager.spawn(async move {
             let sleep = sleep_task_manager.sleep(Duration::from_secs(5));
-            let _ = sleep_started_sender.send(());
             sleep.await;
             *slept_clone.lock().unwrap() = true;
         });
 
-        sleep_started_receiver.await.unwrap();
-        tokio::task::yield_now().await;
+        runtime.run_until_stalled();
         assert!(!*slept.lock().unwrap());
 
         runtime.advance(Duration::from_secs(5));
-        tokio::task::yield_now().await;
+        runtime.run_until_stalled();
         task_manager.join_all().await;
 
         assert!(*slept.lock().unwrap());

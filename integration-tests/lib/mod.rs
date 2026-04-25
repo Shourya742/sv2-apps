@@ -38,14 +38,13 @@ pub mod template_provider;
 pub mod types;
 pub mod utils;
 
-/// Concurrently shuts down multiple services.
-///
-/// Expands to `tokio::join!` over each handle's `.shutdown()` future,
-/// so all shutdowns run in parallel rather than sequentially.
+/// Shuts down multiple services from an async test.
 #[macro_export]
 macro_rules! shutdown_all {
     ($($handle:expr),+ $(,)?) => {
-        tokio::join!($($handle.shutdown()),+)
+        $(
+            $handle.shutdown().await;
+        )+
     };
 }
 
@@ -60,12 +59,7 @@ macro_rules! sim_test {
                 "::",
                 stringify!($name)
             ));
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("failed to build simulation test runtime");
-
-            runtime.block_on(async move $body);
+            $crate::simulation_runtime().block_on(async move $body);
         }
     };
 }
