@@ -1,6 +1,6 @@
 use async_channel::{Receiver, Sender};
 use bitcoin_core_sv2::template_distribution_protocol::{BitcoinCoreSv2TDP, CancellationToken};
-use std::{path::PathBuf, sync::Arc, thread::JoinHandle};
+use std::{path::PathBuf, sync::Arc};
 use stratum_apps::{stratum_core::parsers_sv2::TemplateDistribution, task_manager::TaskManager};
 
 #[derive(Clone)]
@@ -19,9 +19,8 @@ pub async fn connect_to_bitcoin_core(
     bitcoin_core_config: BitcoinCoreSv2TDPConfig,
     cancellation_token: CancellationToken,
     task_manager: Arc<TaskManager>,
-) -> JoinHandle<()> {
+) {
     let bitcoin_core_sv2_token = bitcoin_core_config.cancellation_token.clone();
-    let cancellation_token_clone = cancellation_token.clone();
 
     // spawn a task to handle shutdown signals and cancellation token activations
     task_manager.spawn(async move {
@@ -35,46 +34,30 @@ pub async fn connect_to_bitcoin_core(
         }
     });
 
-    // spawn a dedicated thread to run the BitcoinCoreSv2TDP instance
-    // because we're limited to tokio::task::LocalSet due to the use of `capnp` clients on
-    // `bitcoin-core-sv2`, which are not `Send`
-    std::thread::spawn(move || {
-        // we need a dedicated runtime so we can spawn an async task inside the LocalSet
-        let rt = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt,
+    // Run BitcoinCoreSv2TDP on a dedicated local runtime because `capnp`
+    // clients are !Send and require `tokio::task::LocalSet`.
+    task_manager.spawn_local("bitcoin-core-sv2-tdp", move || async move {
+        // create a new BitcoinCoreSv2TDP instance
+        let mut sv2_bitcoin_core = match BitcoinCoreSv2TDP::new(
+            &bitcoin_core_config.unix_socket_path,
+            bitcoin_core_config.fee_threshold,
+            bitcoin_core_config.min_interval,
+            bitcoin_core_config.incoming_tdp_receiver,
+            bitcoin_core_config.outgoing_tdp_sender,
+            bitcoin_core_config.cancellation_token.clone(),
+        )
+        .await
+        {
+            Ok(sv2_bitcoin_core) => sv2_bitcoin_core,
             Err(e) => {
-                tracing::error!("Failed to create Tokio runtime: {:?}", e);
-
-                // we can't use handle_error here because we're not in a async context yet
-                cancellation_token_clone.cancel();
+                tracing::error!("Failed to create BitcoinCoreToSv2: {:?}", e);
+                bitcoin_core_config.cancellation_token.cancel();
                 return;
             }
         };
-        let tokio_local_set = tokio::task::LocalSet::new();
 
-        tokio_local_set.block_on(&rt, async move {
-            // create a new BitcoinCoreSv2TDP instance
-            let mut sv2_bitcoin_core = match BitcoinCoreSv2TDP::new(
-                &bitcoin_core_config.unix_socket_path,
-                bitcoin_core_config.fee_threshold,
-                bitcoin_core_config.min_interval,
-                bitcoin_core_config.incoming_tdp_receiver,
-                bitcoin_core_config.outgoing_tdp_sender,
-                bitcoin_core_config.cancellation_token.clone(),
-            )
-            .await
-            {
-                Ok(sv2_bitcoin_core) => sv2_bitcoin_core,
-                Err(e) => {
-                    tracing::error!("Failed to create BitcoinCoreToSv2: {:?}", e);
-                    bitcoin_core_config.cancellation_token.cancel();
-                    return;
-                }
-            };
-
-            // run the BitcoinCoreSv2TDP instance, which will block until the cancellation token is
-            // activated
-            sv2_bitcoin_core.run().await;
-        });
-    })
+        // run the BitcoinCoreSv2TDP instance, which will block until the cancellation token is
+        // activated
+        sv2_bitcoin_core.run().await;
+    });
 }

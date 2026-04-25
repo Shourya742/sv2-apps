@@ -1,6 +1,7 @@
 use crate::{
     interceptor::{InterceptAction, MessageDirection},
     message_aggregator::MessagesAggregator,
+    sim_deadline_after, sim_deadline_expired, sim_sleep, sim_spawn,
     types::MsgType,
     utils::{
         create_downstream, create_upstream, recv_from_down_send_to_up, recv_from_up_send_to_down,
@@ -10,6 +11,7 @@ use crate::{
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use stratum_apps::stratum_core::parsers_sv2::{message_type_to_name, AnyMessage};
 use tokio::{net::TcpStream, select};
@@ -86,7 +88,7 @@ impl<'a> Sniffer<'a> {
         let action = self.action.clone();
         let identifier = self.identifier.to_string();
         let negotiated_extensions = self.negotiated_extensions.clone();
-        tokio::spawn(async move {
+        sim_spawn(async move {
             let (downstream_receiver, downstream_sender) =
                 create_downstream(wait_for_client(listening_address).await)
                     .await
@@ -100,7 +102,7 @@ impl<'a> Sniffer<'a> {
                             identifier,
                             upstream_address
                         );
-                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        sim_sleep(Duration::from_secs(1)).await;
                     }
                 }
             })
@@ -169,7 +171,8 @@ impl<'a> Sniffer<'a> {
         message_direction: MessageDirection,
         message_type: u8,
     ) {
-        let now = std::time::Instant::now();
+        let deadline_ms =
+            sim_deadline_after(Duration::from_secs(self.timeout.unwrap_or(DEFAULT_TIMEOUT)));
         loop {
             let has_message_type = match message_direction {
                 MessageDirection::ToDownstream => {
@@ -186,7 +189,7 @@ impl<'a> Sniffer<'a> {
             }
 
             // configurable timeout, 1 minute default
-            if now.elapsed().as_secs() > self.timeout.unwrap_or(DEFAULT_TIMEOUT) {
+            if sim_deadline_expired(deadline_ms) {
                 panic!(
                     "timeout while waiting for message {} to go {}",
                     message_type_to_name(message_type),
@@ -195,7 +198,7 @@ impl<'a> Sniffer<'a> {
             }
 
             // sleep to reduce async lock contention
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            sim_sleep(std::time::Duration::from_secs(1)).await;
         }
     }
 
@@ -214,13 +217,13 @@ impl<'a> Sniffer<'a> {
         message_type: u8,
         deadline: std::time::Duration,
     ) -> bool {
-        let start = std::time::Instant::now();
+        let deadline_ms = sim_deadline_after(deadline);
 
-        while start.elapsed() < deadline {
+        while !sim_deadline_expired(deadline_ms) {
             if self.has_message_type(message_direction, message_type) {
                 return false;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            sim_sleep(std::time::Duration::from_millis(100)).await;
         }
 
         true
@@ -233,7 +236,8 @@ impl<'a> Sniffer<'a> {
         message_direction: MessageDirection,
         message_type: u8,
     ) -> bool {
-        let now = std::time::Instant::now();
+        let deadline_ms =
+            sim_deadline_after(Duration::from_secs(self.timeout.unwrap_or(DEFAULT_TIMEOUT)));
         loop {
             let has_message_type = match message_direction {
                 MessageDirection::ToDownstream => self
@@ -250,7 +254,7 @@ impl<'a> Sniffer<'a> {
             }
 
             // configurable timeout, 1 minute default
-            if now.elapsed().as_secs() > self.timeout.unwrap_or(DEFAULT_TIMEOUT) {
+            if sim_deadline_expired(deadline_ms) {
                 panic!(
                     "timeout while waiting for message {} to go {}",
                     message_type_to_name(message_type),
@@ -259,7 +263,7 @@ impl<'a> Sniffer<'a> {
             }
 
             // sleep to reduce async lock contention
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            sim_sleep(std::time::Duration::from_secs(1)).await;
         }
     }
 

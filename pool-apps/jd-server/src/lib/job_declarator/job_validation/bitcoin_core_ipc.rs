@@ -14,8 +14,7 @@ use bitcoin_core_sv2::job_declaration_protocol::{
 use dashmap::DashMap;
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
-    thread::JoinHandle,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use stratum_apps::{
@@ -30,6 +29,7 @@ use stratum_apps::{
         job_declaration_sv2::{DeclareMiningJob, ProvideMissingTransactionsSuccess, PushSolution},
         mining_sv2::SetCustomMiningJob,
     },
+    task_manager::TaskManager,
     tp_type::BitcoinNetwork,
     utils::types::{JdToken, RequestId},
 };
@@ -193,7 +193,6 @@ pub struct BitcoinCoreIPCEngine {
     allocated_token_entries: Arc<DashMap<JdToken, AllocatedTokenEntry>>,
     declared_custom_jobs: Arc<DashMap<RequestId, DeclaredCustomJob>>,
     cancellation_token: CancellationToken,
-    jdp_thread_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 #[cfg_attr(not(test), hotpath::measure_all)]
@@ -208,6 +207,7 @@ impl BitcoinCoreIPCEngine {
         network: BitcoinNetwork,
         data_dir: Option<PathBuf>,
         cancellation_token: CancellationToken,
+        task_manager: Arc<TaskManager>,
     ) -> Result<Self, JDSErrorKind> {
         // Construct the Bitcoin Core Unix socket path
         let unix_socket_path = {
@@ -251,36 +251,26 @@ impl BitcoinCoreIPCEngine {
 
         let cancellation_token_clone = cancellation_token.clone();
 
-        // Spawn dedicated thread for BitcoinCoreSv2JDP (requires !Send Cap'n Proto client)
-        let jdp_thread_handle = std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new()
-                .expect("Failed to create tokio runtime for BitcoinCoreSv2JDP");
+        // Run BitcoinCoreSv2JDP on a dedicated local runtime because `capnp`
+        // clients are !Send and require `tokio::task::LocalSet`.
+        task_manager.spawn_local("bitcoin-core-sv2-jdp", move || async move {
+            let bitcoin_core_sv2_jdp = match BitcoinCoreSv2JDP::new(
+                unix_socket_path,
+                request_receiver,
+                cancellation_token_clone,
+                ready_tx,
+            )
+            .await
+            {
+                Ok(client) => client,
+                Err(e) => {
+                    tracing::error!("Failed to create BitcoinCoreSv2JDP: {:?}", e);
+                    // ready_tx dropped here, signaling failure to ready_rx
+                    return;
+                }
+            };
 
-            rt.block_on(async {
-                let local_set = tokio::task::LocalSet::new();
-
-                local_set
-                    .run_until(async {
-                        let bitcoin_core_sv2_jdp = match BitcoinCoreSv2JDP::new(
-                            unix_socket_path,
-                            request_receiver,
-                            cancellation_token_clone,
-                            ready_tx,
-                        )
-                        .await
-                        {
-                            Ok(client) => client,
-                            Err(e) => {
-                                tracing::error!("Failed to create BitcoinCoreSv2JDP: {:?}", e);
-                                // ready_tx dropped here, signaling failure to ready_rx
-                                return;
-                            }
-                        };
-
-                        bitcoin_core_sv2_jdp.run().await;
-                    })
-                    .await;
-            });
+            bitcoin_core_sv2_jdp.run().await;
         });
 
         // Wait for BitcoinCoreSv2JDP to complete mempool bootstrap
@@ -297,13 +287,14 @@ impl BitcoinCoreIPCEngine {
         let janitor_allocated_token_to_request_id = Arc::clone(&allocated_token_to_request_id);
         let janitor_declared_custom_jobs = Arc::clone(&declared_custom_jobs);
         let janitor_cancellation = cancellation_token.clone();
-        tokio::spawn(async move {
+        let janitor_task_manager = task_manager.clone();
+        task_manager.spawn(async move {
             let janitor_interval = Duration::from_secs(JANITOR_INTERVAL_SECS);
             let token_timeout = Duration::from_secs(ALLOCATED_TOKEN_TIMEOUT_SECS);
             loop {
                 tokio::select! {
                     _ = janitor_cancellation.cancelled() => break,
-                    _ = tokio::time::sleep(janitor_interval) => {
+                    _ = janitor_task_manager.sleep(janitor_interval) => {
                         let now = Instant::now();
                         let expired_tokens: Vec<JdToken> = janitor_allocated_token_to_request_id
                             .iter()
@@ -332,7 +323,6 @@ impl BitcoinCoreIPCEngine {
             allocated_token_entries: allocated_token_to_request_id,
             declared_custom_jobs,
             cancellation_token,
-            jdp_thread_handle: Arc::new(Mutex::new(Some(jdp_thread_handle))),
         })
     }
 }
@@ -351,13 +341,6 @@ fn validation_context_drifted(
 impl JobValidationEngine for BitcoinCoreIPCEngine {
     fn shutdown(&self) {
         self.cancellation_token.cancel();
-        if let Ok(mut handle_guard) = self.jdp_thread_handle.lock() {
-            if let Some(handle) = handle_guard.take() {
-                if let Err(e) = handle.join() {
-                    tracing::warn!("BitcoinCoreSv2JDP thread join failed during shutdown: {e:?}");
-                }
-            }
-        }
     }
 
     /// Validates a `DeclareMiningJob` by forwarding it to Bitcoin Core over IPC.

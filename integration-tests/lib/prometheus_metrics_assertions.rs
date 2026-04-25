@@ -1,7 +1,8 @@
 //! Helpers for querying and asserting on Prometheus metrics and JSON API endpoints
 //! exposed by SV2 components during integration tests.
 
-use std::net::SocketAddr;
+use crate::{sim_deadline_after, sim_deadline_expired, sim_sleep};
+use std::{net::SocketAddr, time::Duration};
 
 /// Fetch the raw Prometheus text-format metrics from a component's `/metrics` endpoint.
 /// Uses `spawn_blocking` to avoid blocking the tokio runtime with synchronous HTTP calls.
@@ -148,9 +149,9 @@ pub async fn poll_until_metric_gte(
     monitoring_addr: SocketAddr,
     metric_name: &str,
     min: f64,
-    timeout: std::time::Duration,
+    timeout: Duration,
 ) -> String {
-    let deadline = tokio::time::Instant::now() + timeout;
+    let deadline_ms = sim_deadline_after(timeout);
     loop {
         let metrics = fetch_metrics(monitoring_addr).await;
         let satisfied = metrics.lines().any(|line| {
@@ -178,13 +179,13 @@ pub async fn poll_until_metric_gte(
         if satisfied {
             return metrics;
         }
-        if tokio::time::Instant::now() >= deadline {
+        if sim_deadline_expired(deadline_ms) {
             panic!(
                 "Metric '{}' never reached >= {} within {:?}. Last /metrics response:\n{}",
                 metric_name, min, timeout, metrics
             );
         }
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        sim_sleep(Duration::from_millis(500)).await;
     }
 }
 

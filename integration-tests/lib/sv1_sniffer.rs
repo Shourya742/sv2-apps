@@ -1,6 +1,8 @@
-use crate::interceptor::MessageDirection;
+use crate::{
+    interceptor::MessageDirection, sim_deadline_after, sim_deadline_expired, sim_sleep, sim_spawn,
+};
 use async_channel::{Receiver, Sender};
-use std::{collections::VecDeque, net::SocketAddr, sync::Arc};
+use std::{collections::VecDeque, net::SocketAddr, sync::Arc, time::Duration};
 use stratum_apps::{
     network_helpers::sv1_connection::ConnectionSV1,
     stratum_core::sv1_api::{self, server_to_client},
@@ -52,7 +54,7 @@ impl SnifferSV1 {
         let listening_address = self.listening_address;
         let messages_from_downstream = self.messages_from_downstream.clone();
         let messages_from_upstream = self.messages_from_upstream.clone();
-        tokio::spawn(async move {
+        sim_spawn(async move {
             let listener = TcpListener::bind(listening_address)
                 .await
                 .expect("Failed to listen on given address");
@@ -63,7 +65,7 @@ impl SnifferSV1 {
                         tracing::warn!(
                             "SnifferSV1: unable to connect to upstream, retrying after 1 second"
                         );
-                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        sim_sleep(Duration::from_secs(1)).await;
                         continue;
                     }
                 }
@@ -97,7 +99,7 @@ impl SnifferSV1 {
         if message.is_empty() {
             panic!("Message cannot be empty");
         }
-        let now = std::time::Instant::now();
+        let deadline_ms = sim_deadline_after(Duration::from_secs(60));
         tokio::select!(
             _ = tokio::signal::ctrl_c() => { },
             _ = async {
@@ -114,10 +116,10 @@ impl SnifferSV1 {
                             }
                         }
                     }
-                    if now.elapsed().as_secs() > 60 {
+                    if sim_deadline_expired(deadline_ms) {
                         panic!( "Timeout: SV1 message {} not found", message.first().unwrap());
                     } else {
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        sim_sleep(Duration::from_secs(1)).await;
                         continue;
                     }
                 }
@@ -128,7 +130,7 @@ impl SnifferSV1 {
     /// Wait for a mining.notify message with a job_id that is a keepalive job.
     /// Keepalive job IDs contain the '#' delimiter (format: `{original_job_id}#{counter}`).
     pub async fn wait_for_keepalive_notify(&self, direction: MessageDirection) {
-        let now = std::time::Instant::now();
+        let deadline_ms = sim_deadline_after(Duration::from_secs(60));
         tokio::select!(
             _ = tokio::signal::ctrl_c() => { },
             _ = async {
@@ -148,12 +150,12 @@ impl SnifferSV1 {
                     if has_notify {
                         break;
                     }
-                    if now.elapsed().as_secs() > 60 {
+                    if sim_deadline_expired(deadline_ms) {
                         panic!(
                             "Timeout: keepalive mining.notify (job_id containing '#') not found"
                         );
                     } else {
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        sim_sleep(Duration::from_secs(1)).await;
                         continue;
                     }
                 }

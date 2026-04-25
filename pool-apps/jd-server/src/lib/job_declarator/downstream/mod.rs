@@ -172,7 +172,7 @@ impl Downstream {
 
             // sleep to make sure SetupConnectionError is sent
             // before we break the TCP connection
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            task_manager.sleep(std::time::Duration::from_secs(1)).await;
 
             self.downstream_cancellation_token.cancel();
 
@@ -242,13 +242,14 @@ impl Downstream {
         let downstream_id = self.downstream_id;
         let token_timeout = Duration::from_secs(ALLOCATED_TOKEN_TIMEOUT_SECS);
         let janitor_interval = Duration::from_secs(JANITOR_INTERVAL_SECS);
+        let sleep_task_manager = task_manager.clone();
         task_manager.spawn(async move {
             loop {
                 tokio::select! {
                     _ = cancellation_token.cancelled() => {
                         break;
                     }
-                    _ = tokio::time::sleep(janitor_interval) => {
+                    _ = sleep_task_manager.sleep(janitor_interval) => {
                         pending_declare_mining_jobs.retain(|request_id, (inserted_at, _)| {
                             let expired = Instant::now().duration_since(*inserted_at) > token_timeout;
                             if expired {

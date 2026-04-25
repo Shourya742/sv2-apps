@@ -3,6 +3,7 @@ use std::{
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -12,7 +13,10 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
-use crate::utils::{http, tarball};
+use crate::{
+    sim_sleep, sim_spawn,
+    utils::{http, tarball},
+};
 
 use super::error::MinerdError;
 
@@ -181,7 +185,7 @@ impl MinerdProcess {
         let process = Arc::clone(&self.process);
         let cancellation_token = self.cancellation_token.clone();
 
-        tokio::spawn(async move {
+        sim_spawn(async move {
             info!("Proxy server started, waiting for connections...");
 
             loop {
@@ -204,7 +208,7 @@ impl MinerdProcess {
 
                                         // Task for downstream -> upstream (minerd -> pool)
                                         if single_submit {
-                                            tokio::spawn(async move {
+                                            sim_spawn(async move {
                                                 let _ = Self::proxy_tcp_data_single_submit(
                                                     downstream_read,
                                                     upstream_write,
@@ -213,7 +217,7 @@ impl MinerdProcess {
                                                 ).await;
                                             });
                                         } else {
-                                            tokio::spawn(async move {
+                                            sim_spawn(async move {
                                                 let _ = Self::proxy_tcp_data(
                                                     downstream_read,
                                                     upstream_write,
@@ -223,7 +227,7 @@ impl MinerdProcess {
                                         }
 
                                         // Task for upstream -> downstream (pool -> minerd)
-                                        tokio::spawn(async move {
+                                        sim_spawn(async move {
                                             let _ = Self::proxy_tcp_data(
                                                 upstream_read,
                                                 downstream_write,
@@ -414,7 +418,7 @@ impl MinerdProcess {
         })?;
 
         // Give minerd some time to run and produce hashrate output
-        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+        sim_sleep(Duration::from_secs(3)).await;
 
         // Kill the benchmark process
         if let Err(e) = child.kill().await {
@@ -541,9 +545,10 @@ pub async fn start_minerd(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sim_test;
     use std::net::{Ipv4Addr, SocketAddr};
 
-    #[tokio::test]
+    sim_test! {
     async fn test_measure_hashrate() {
         let minerd_process = MinerdProcess::new(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)), false)
             .await
@@ -551,6 +556,7 @@ mod tests {
         let hashrate = minerd_process.measure_hashrate().await.unwrap();
         println!("Hashrate: {} hashes/s", hashrate);
         assert!(hashrate > 0.0);
+    }
     }
 
     #[test]

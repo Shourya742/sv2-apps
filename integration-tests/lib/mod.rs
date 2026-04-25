@@ -8,12 +8,15 @@ use once_cell::sync::OnceCell;
 use pool_sv2::PoolSv2;
 use std::{
     convert::TryFrom,
+    future::Future,
     net::{Ipv4Addr, SocketAddr},
+    sync::Arc,
     time::Duration,
 };
 use stratum_apps::{
     config_helpers::CoinbaseRewardScript,
     key_utils::{Secp256k1PublicKey, Secp256k1SecretKey},
+    runtime::Runtime,
     tp_type::TemplateProviderType,
 };
 use tracing::Level;
@@ -26,6 +29,7 @@ pub mod message_aggregator;
 pub mod mining_device;
 pub mod mock_roles;
 pub mod prometheus_metrics_assertions;
+pub mod seeded_runtime;
 pub mod sniffer;
 pub mod sniffer_error;
 pub mod sv1_minerd;
@@ -34,14 +38,29 @@ pub mod template_provider;
 pub mod types;
 pub mod utils;
 
-/// Concurrently shuts down multiple services.
-///
-/// Expands to `tokio::join!` over each handle's `.shutdown()` future,
-/// so all shutdowns run in parallel rather than sequentially.
+/// Shuts down multiple services from an async test.
 #[macro_export]
 macro_rules! shutdown_all {
     ($($handle:expr),+ $(,)?) => {
-        tokio::join!($($handle.shutdown()),+)
+        $(
+            $handle.shutdown().await;
+        )+
+    };
+}
+
+#[macro_export]
+macro_rules! sim_test {
+    ($(#[$meta:meta])* $vis:vis async fn $name:ident() $body:block) => {
+        $(#[$meta])*
+        #[test]
+        $vis fn $name() {
+            let _sim_test_id = $crate::seeded_runtime::enter_test(concat!(
+                module_path!(),
+                "::",
+                stringify!($name)
+            ));
+            $crate::simulation_runtime().block_on(async move $body);
+        }
     };
 }
 
@@ -52,6 +71,35 @@ const POOL_COINBASE_REWARD_DESCRIPTOR: &str = "addr(tb1qa0sm0hxzj0x25rh8gw5xlzwl
 const JDC_COINBASE_REWARD_DESCRIPTOR: &str = "addr(tb1qpusf5256yxv50qt0pm0tue8k952fsu5lzsphft)";
 
 static LOGGER: OnceCell<()> = OnceCell::new();
+
+pub fn simulation_runtime() -> Arc<seeded_runtime::SeededRuntime> {
+    seeded_runtime::SeededRuntime::for_current_test()
+}
+
+pub async fn sim_sleep(duration: Duration) {
+    simulation_runtime().sleep(duration).await;
+}
+
+pub fn sim_now_ms() -> u128 {
+    simulation_runtime().now_ms()
+}
+
+pub fn sim_deadline_after(duration: Duration) -> u128 {
+    sim_now_ms() + duration.as_millis()
+}
+
+pub fn sim_deadline_expired(deadline_ms: u128) -> bool {
+    sim_now_ms() >= deadline_ms
+}
+
+pub fn sim_spawn<F>(future: F)
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    simulation_runtime()
+        .runtime_handle()
+        .spawn(Box::pin(future));
+}
 
 /// Helper to create Sv2Tp config for Pool/JDC with default public key.
 pub fn sv2_tp_config(address: SocketAddr) -> TemplateProviderType {
@@ -94,6 +142,13 @@ pub fn start_tracing() {
             .with(fmt::layer())
             .init();
     });
+    let runtime = simulation_runtime();
+    tracing::info!(
+        test = %runtime.test_id(),
+        base_seed = runtime.base_seed(),
+        seed = runtime.seed(),
+        "seeded integration runtime ready"
+    );
 }
 
 pub fn start_sniffer(
@@ -164,12 +219,13 @@ pub async fn start_pool(
         monitoring_cache_refresh_secs,
         None, // no JDS
     );
-    let pool = PoolSv2::new(config);
+    let runtime = simulation_runtime();
+    let pool = PoolSv2::new_with_runtime(config, runtime.runtime_handle());
     let pool_clone = pool.clone();
-    tokio::spawn(async move {
+    runtime.runtime_handle().spawn(Box::pin(async move {
         _ = pool_clone.start().await;
-    });
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    }));
+    sim_sleep(Duration::from_secs(1)).await;
     (pool, listening_address, monitoring_address)
 }
 
@@ -263,9 +319,15 @@ pub fn start_jdc(
         monitoring_cache_refresh_secs,
         None,
     );
-    let ret = jd_client_sv2::JobDeclaratorClient::new(jd_client_proxy);
+    let runtime = simulation_runtime();
+    let ret = jd_client_sv2::JobDeclaratorClient::new_with_runtime(
+        jd_client_proxy,
+        runtime.runtime_handle(),
+    );
     let ret_clone = ret.clone();
-    tokio::spawn(async move { ret_clone.start().await });
+    runtime
+        .runtime_handle()
+        .spawn(Box::pin(async move { ret_clone.start().await }));
     (ret, jdc_address, monitoring_address)
 }
 
@@ -323,12 +385,13 @@ pub async fn start_pool_with_jds(
         Some(JDSPartialConfig::new(jds_address)),
     );
 
-    let pool = PoolSv2::new(config);
+    let runtime = simulation_runtime();
+    let pool = PoolSv2::new_with_runtime(config, runtime.runtime_handle());
     let pool_clone = pool.clone();
-    tokio::spawn(async move {
+    runtime.runtime_handle().spawn(Box::pin(async move {
         _ = pool_clone.start().await;
-    });
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    }));
+    sim_sleep(Duration::from_secs(1)).await;
     (pool, pool_address, jds_address, monitoring_address)
 }
 
@@ -397,11 +460,13 @@ pub async fn start_sv2_translator(
         monitoring_address,
         monitoring_cache_refresh_secs,
     );
-    let translator_v2 = translator_sv2::TranslatorSv2::new(config);
+    let runtime = simulation_runtime();
+    let translator_v2 =
+        translator_sv2::TranslatorSv2::new_with_runtime(config, runtime.runtime_handle());
     let clone_translator_v2 = translator_v2.clone();
-    tokio::spawn(async move {
+    runtime.runtime_handle().spawn(Box::pin(async move {
         clone_translator_v2.start().await;
-    });
+    }));
     (translator_v2, listening_address, monitoring_address)
 }
 
@@ -427,7 +492,7 @@ pub fn start_mining_device_sv2(
     nominal_hashrate_multiplier: Option<f32>,
     single_submit: bool,
 ) {
-    tokio::spawn(async move {
+    sim_spawn(async move {
         crate::mining_device::connect(
             upstream.to_string(),
             pub_key,

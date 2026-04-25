@@ -7,8 +7,8 @@ use stratum_apps::stratum_core::{job_declaration_sv2::*, template_distribution_s
 
 // Block propagated from JDS to TP
 // Currently disabled, see https://github.com/stratum-mining/sv2-apps/issues/322
+sim_test! {
 #[ignore]
-#[tokio::test]
 async fn propagated_from_jds_to_tp() {
     start_tracing();
     let (tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -49,4 +49,5 @@ async fn propagated_from_jds_to_tp() {
     let new_block_hash = tp.get_best_block_hash().unwrap();
     assert_ne!(current_block_hash, new_block_hash);
     shutdown_all!(translator, jdc, pool);
+}
 }

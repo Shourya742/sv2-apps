@@ -3,7 +3,7 @@ use interceptor::MessageDirection;
 use stratum_apps::stratum_core::sv1_api::{self, server_to_client};
 use sv1_sniffer::SV1MessageFilter;
 
-#[tokio::test]
+sim_test! {
 async fn test_basic_sv1() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -26,23 +26,24 @@ async fn test_basic_sv1() {
         .await;
     shutdown_all!(translator, pool);
 }
+}
 
-/// This test demonstrates the `SnifferSV1::wait_and_assert` feature, which allows you to:
-/// 1. Wait for a specific SV1 message to arrive
-/// 2. Execute custom assertions on the message content
-///
-/// This is useful when you need to verify not just that a message was received, but also that
-/// it contains the expected data.
-///
-/// # Example Usage
-///
-/// The test shows two ways to filter messages:
-/// - `SV1MessageFilter::WithMessageName`: Filter by method name (e.g., "mining.notify")
-/// - `SV1MessageFilter::WithMessageId`: Filter by message ID for responses
-///
-/// The assertion closure receives the full `sv1_api::Message` and can perform any validation
-/// needed on the message fields.
-#[tokio::test]
+// This test demonstrates the `SnifferSV1::wait_and_assert` feature, which allows you to:
+// 1. Wait for a specific SV1 message to arrive
+// 2. Execute custom assertions on the message content
+//
+// This is useful when you need to verify not just that a message was received, but also that
+// it contains the expected data.
+//
+// # Example Usage
+//
+// The test shows two ways to filter messages:
+// - `SV1MessageFilter::WithMessageName`: Filter by method name (e.g., "mining.notify")
+// - `SV1MessageFilter::WithMessageId`: Filter by message ID for responses
+//
+// The assertion closure receives the full `sv1_api::Message` and can perform any validation
+// needed on the message fields.
+sim_test! {
 async fn test_sniffer_sv1_wait_and_assert() {
     start_tracing();
     let (tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -137,4 +138,5 @@ async fn test_sniffer_sv1_wait_and_assert() {
         )
         .await;
     shutdown_all!(translator, pool);
+}
 }

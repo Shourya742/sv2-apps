@@ -19,7 +19,7 @@ use stratum_apps::stratum_core::{
 // The test simulates a miner submitting shares before the custom job is
 // acknowledged by the upstream pool, ensuring that no shares are lost and
 // that they are forwarded only after the job becomes valid.
-#[tokio::test]
+sim_test! {
 async fn jdc_cached_shares_relayed_on_set_custom_job_success() {
     start_tracing();
     // Use a high difficulty to ensure the miner cannot find a valid block.
@@ -57,7 +57,7 @@ async fn jdc_cached_shares_relayed_on_set_custom_job_success() {
         match pool_sniffer.next_message_from_downstream() {
             Some((_, AnyMessage::Mining(Mining::OpenExtendedMiningChannel(msg)))) => break msg,
             _ => {
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                sim_sleep(Duration::from_secs(1)).await;
             }
         }
     };
@@ -82,7 +82,7 @@ async fn jdc_cached_shares_relayed_on_set_custom_job_success() {
         match pool_sniffer.next_message_from_downstream() {
             Some((_, AnyMessage::Mining(Mining::SetCustomMiningJob(msg)))) => break msg,
             _ => {
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                sim_sleep(Duration::from_secs(1)).await;
             }
         }
     };
@@ -106,11 +106,12 @@ async fn jdc_cached_shares_relayed_on_set_custom_job_success() {
         match pool_sniffer.next_message_from_downstream() {
             Some((_, AnyMessage::Mining(Mining::SubmitSharesExtended(msg)))) => break msg,
             _ => {
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                sim_sleep(Duration::from_secs(1)).await;
             }
         }
     };
 
     assert_eq!(submit_share_extended.job_id, job_id);
     shutdown_all!(translator, jdc);
+}
 }

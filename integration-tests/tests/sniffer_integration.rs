@@ -13,7 +13,7 @@ use stratum_apps::stratum_core::{
 
 // This test aims to assert that Sniffer is able to intercept and replace/ignore messages.
 // TP -> sniffer_a -> sniffer_b -> Pool
-#[tokio::test]
+sim_test! {
 async fn test_sniffer_interception() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -106,8 +106,9 @@ async fn test_sniffer_interception() {
     );
     pool.shutdown().await;
 }
+}
 
-#[tokio::test]
+sim_test! {
 async fn test_sniffer_wait_for_message_type_with_remove() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -134,4 +135,5 @@ async fn test_sniffer_wait_for_message_type_with_remove() {
         ))
     );
     pool.shutdown().await;
+}
 }

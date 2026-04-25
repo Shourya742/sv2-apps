@@ -19,7 +19,7 @@ use stratum_apps::stratum_core::{
 // messages upon connection.
 // The Sniffer is used as a proxy between the Upstream(Template Provider) and Downstream(Pool). The
 // Pool will connect to the Sniffer, and the Sniffer will connect to the Template Provider.
-#[tokio::test]
+sim_test! {
 async fn success_pool_template_provider_connection() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -77,6 +77,7 @@ async fn success_pool_template_provider_connection() {
     assert_tp_message!(sniffer.next_message_from_upstream(), SetNewPrevHash);
     pool.shutdown().await;
 }
+}
 
 // This test starts a Template Provider, a Pool, and a Translator Proxy, and verifies the
 // correctness of the exchanged messages during connection and operation.
@@ -92,7 +93,7 @@ async fn success_pool_template_provider_connection() {
 //   occurred with non-future jobs.
 //
 // Related issue: https://github.com/stratum-mining/stratum/issues/1324
-#[tokio::test]
+sim_test! {
 async fn header_timestamp_value_assertion_in_new_extended_mining_job() {
     start_tracing();
     let sv2_interval = Some(5);
@@ -185,11 +186,12 @@ async fn header_timestamp_value_assertion_in_new_extended_mining_job() {
     );
     shutdown_all!(translator, pool);
 }
+}
 
 // This test starts a Pool, a Sniffer, and a Sv2 Mining Device.  It then checks if the Pool receives
 // a share from the Sv2 Mining Device.  While also checking all the messages exchanged between the
 // Pool and the Mining Device in between.
-#[tokio::test]
+sim_test! {
 async fn pool_standard_channel_receives_share() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -241,10 +243,11 @@ async fn pool_standard_channel_receives_share() {
         .await;
     pool.shutdown().await;
 }
+}
 
 // This test verifies that the Pool does not send SetNewPrevHash and NewExtendedMiningJob (future
 // and non-future) messages to JDC.
-#[tokio::test]
+sim_test! {
 async fn pool_does_not_send_jobs_to_jdc() {
     start_tracing();
     let sv2_interval = Some(5);
@@ -332,7 +335,7 @@ async fn pool_does_not_send_jobs_to_jdc() {
         )
         .await;
 
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    sim_sleep(std::time::Duration::from_secs(1)).await;
 
     // Verify that future NewExtendedMiningJob messages are NOT sent to JDC
     assert!(
@@ -361,7 +364,7 @@ async fn pool_does_not_send_jobs_to_jdc() {
     // Trigger a new template by creating a mempool transaction
     tp.create_mempool_transaction().unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    sim_sleep(std::time::Duration::from_secs(5)).await;
 
     // Verify that non-future NewExtendedMiningJob messages are NOT sent to JDC
     assert!(
@@ -376,11 +379,12 @@ async fn pool_does_not_send_jobs_to_jdc() {
     );
     shutdown_all!(translator, jdc, pool);
 }
+}
 
 // The test runs pool and translator, with translator sending a SetupConnection message
 // with a wrong protocol, this test asserts whether pool sends SetupConnection error or
 // not to such downstream.
-#[tokio::test]
+sim_test! {
 async fn pool_reject_setup_connection_with_non_mining_protocol() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -426,7 +430,7 @@ async fn pool_reject_setup_connection_with_non_mining_protocol() {
     )
     .await;
 
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    sim_sleep(std::time::Duration::from_secs(1)).await;
 
     pool_translator_sniffer
         .wait_for_message_type(MessageDirection::ToUpstream, MESSAGE_TYPE_SETUP_CONNECTION)
@@ -449,10 +453,11 @@ async fn pool_reject_setup_connection_with_non_mining_protocol() {
     );
     shutdown_all!(translator, pool);
 }
+}
 
 // This test verifies that pool rejects SetCustomMiningJob when it is started without embedded JDS
 // (`start_pool` with no `[jds]` config).
-#[tokio::test]
+sim_test! {
 async fn pool_without_jds_rejects_set_custom_mining_job() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -522,10 +527,11 @@ async fn pool_without_jds_rejects_set_custom_mining_job() {
 
     shutdown_all!(pool);
 }
+}
 
 // This test launches a Pool and leverages a MockDownstream to test the correct functionalities of
 // grouping extended channels.
-#[tokio::test]
+sim_test! {
 async fn pool_group_extended_channels() {
     start_tracing();
     let sv2_interval = Some(5);
@@ -631,7 +637,7 @@ async fn pool_group_extended_channels() {
     );
 
     // wait a bit
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    sim_sleep(std::time::Duration::from_secs(1)).await;
 
     // make sure there's no extra NewExtendedMiningJob messages
     assert!(
@@ -675,7 +681,7 @@ async fn pool_group_extended_channels() {
     );
 
     // wait a bit
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    sim_sleep(std::time::Duration::from_secs(1)).await;
 
     // make sure there's no extra SetNewPrevHash messages
     assert!(
@@ -690,10 +696,11 @@ async fn pool_group_extended_channels() {
     );
     pool.shutdown().await;
 }
+}
 
 // This test launches a Pool and leverages a MockDownstream to test the correct functionalities of
 // grouping standard channels.
-#[tokio::test]
+sim_test! {
 async fn pool_group_standard_channels() {
     start_tracing();
     let sv2_interval = Some(5);
@@ -800,7 +807,7 @@ async fn pool_group_standard_channels() {
     );
 
     // wait a bit
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    sim_sleep(std::time::Duration::from_secs(1)).await;
 
     // make sure there's no extra NewExtendedMiningJob messages
     assert!(
@@ -856,7 +863,7 @@ async fn pool_group_standard_channels() {
     );
 
     // wait a bit
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    sim_sleep(std::time::Duration::from_secs(1)).await;
 
     // make sure there's no extra SetNewPrevHash messages
     assert!(
@@ -871,10 +878,11 @@ async fn pool_group_standard_channels() {
     );
     pool.shutdown().await;
 }
+}
 
 // This test launches a Pool and leverages a MockDownstream to test the correct functionalities of
 // NOT grouping standard channels when REQUIRES_STANDARD_JOBS is set.
-#[tokio::test]
+sim_test! {
 async fn pool_require_standard_jobs_set_does_not_group_standard_channels() {
     start_tracing();
     let sv2_interval = Some(5);
@@ -1028,4 +1036,5 @@ async fn pool_require_standard_jobs_set_does_not_group_standard_channels() {
         );
     }
     pool.shutdown().await;
+}
 }

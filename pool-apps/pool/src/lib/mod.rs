@@ -3,13 +3,13 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    thread::JoinHandle,
 };
 
 use async_channel::unbounded;
 
 use bitcoin_core_sv2::template_distribution_protocol::CancellationToken;
 use stratum_apps::{
+    runtime::{RuntimeHandle, TokioRuntime},
     stratum_core::bitcoin::consensus::Encodable, task_manager::TaskManager,
     tp_type::TemplateProviderType, utils::types::GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS,
 };
@@ -44,6 +44,7 @@ pub mod utils;
 #[derive(Debug, Clone)]
 pub struct PoolSv2 {
     config: PoolConfig,
+    runtime: RuntimeHandle,
     cancellation_token: CancellationToken,
     shutdown_notify: Arc<Notify>,
     is_alive: Arc<AtomicBool>,
@@ -52,8 +53,13 @@ pub struct PoolSv2 {
 #[cfg_attr(not(test), hotpath::measure_all)]
 impl PoolSv2 {
     pub fn new(config: PoolConfig) -> Self {
+        Self::new_with_runtime(config, TokioRuntime::handle())
+    }
+
+    pub fn new_with_runtime(config: PoolConfig, runtime: RuntimeHandle) -> Self {
         Self {
             config,
+            runtime,
             cancellation_token: CancellationToken::new(),
             shutdown_notify: Arc::new(Notify::new()),
             is_alive: Arc::new(AtomicBool::new(true)),
@@ -71,7 +77,7 @@ impl PoolSv2 {
 
         let cancellation_token = self.cancellation_token.clone();
 
-        let task_manager = Arc::new(TaskManager::new());
+        let task_manager = Arc::new(TaskManager::with_runtime(self.runtime.clone()));
 
         let (downstream_to_channel_manager_sender, downstream_to_channel_manager_receiver) =
             unbounded();
@@ -97,6 +103,7 @@ impl PoolSv2 {
                             network.clone(),
                             data_dir.clone(),
                             cancellation_token.clone(),
+                            task_manager.clone(),
                         )
                         .await?,
                     ),
@@ -190,8 +197,6 @@ impl PoolSv2 {
         }
 
         let channel_manager_clone = channel_manager.clone();
-        let mut bitcoin_core_sv2_join_handle: Option<JoinHandle<()>> = None;
-
         match self.config.template_provider_type().clone() {
             TemplateProviderType::Sv2Tp {
                 address,
@@ -243,14 +248,12 @@ impl PoolSv2 {
                     cancellation_token: CancellationToken::new(),
                 };
 
-                bitcoin_core_sv2_join_handle = Some(
-                    connect_to_bitcoin_core(
-                        bitcoin_core_config,
-                        cancellation_token.clone(),
-                        task_manager.clone(),
-                    )
-                    .await,
-                );
+                connect_to_bitcoin_core(
+                    bitcoin_core_config,
+                    cancellation_token.clone(),
+                    task_manager.clone(),
+                )
+                .await;
             }
         }
 
@@ -287,14 +290,6 @@ impl PoolSv2 {
         if let Some(ref jd) = job_declarator_for_shutdown {
             info!("Shutting down embedded JDS...");
             jd.shutdown();
-        }
-
-        if let Some(bitcoin_core_sv2_join_handle) = bitcoin_core_sv2_join_handle {
-            info!("Waiting for BitcoinCoreSv2TDP dedicated thread to shutdown...");
-            match bitcoin_core_sv2_join_handle.join() {
-                Ok(_) => info!("BitcoinCoreSv2TDP dedicated thread shutdown complete."),
-                Err(e) => error!("BitcoinCoreSv2TDP dedicated thread error: {e:?}"),
-            }
         }
 
         warn!(

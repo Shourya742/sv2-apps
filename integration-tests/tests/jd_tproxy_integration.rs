@@ -1,7 +1,7 @@
 use integration_tests_sv2::{interceptor::MessageDirection, template_provider::DifficultyLevel, *};
 use stratum_apps::stratum_core::{common_messages_sv2::*, mining_sv2::*};
 
-#[tokio::test]
+sim_test! {
 async fn jd_non_aggregated_tproxy_integration() {
     start_tracing();
     let (tp, _tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -89,8 +89,9 @@ async fn jd_non_aggregated_tproxy_integration() {
         .await;
     shutdown_all!(translator, jdc, pool);
 }
+}
 
-#[tokio::test]
+sim_test! {
 async fn jd_aggregated_tproxy_integration() {
     start_tracing();
     let (tp, _tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -180,4 +181,5 @@ async fn jd_aggregated_tproxy_integration() {
         )
         .await;
     shutdown_all!(translator, jdc, pool);
+}
 }

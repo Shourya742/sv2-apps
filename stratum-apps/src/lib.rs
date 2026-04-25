@@ -62,6 +62,9 @@ pub mod key_utils;
 /// Utility methods used in apps.
 pub mod utils;
 
+/// Runtime abstraction used by apps and tests.
+pub mod runtime;
+
 /// Channel monitoring - expose channel data via HTTP JSON APIs
 #[cfg(feature = "monitoring")]
 pub mod monitoring;
