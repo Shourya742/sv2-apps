@@ -1,6 +1,9 @@
-use crate::utils::{create_downstream, create_upstream, message_from_frame, wait_for_client};
+use crate::{
+    sim_sleep, sim_spawn,
+    utils::{create_downstream, create_upstream, message_from_frame, wait_for_client},
+};
 use async_channel::Sender;
-use std::{convert::TryInto, net::SocketAddr};
+use std::{convert::TryInto, net::SocketAddr, time::Duration};
 use stratum_apps::{
     stratum_core::{
         codec_sv2::StandardEitherFrame,
@@ -70,7 +73,7 @@ impl MockDownstream {
                     tracing::warn!(
                         "MockDownstream: unable to connect to upstream, retrying after 1 second"
                     );
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    sim_sleep(Duration::from_secs(1)).await;
                 }
             }
         })
@@ -96,7 +99,7 @@ impl MockDownstream {
             );
         }
 
-        tokio::spawn(async move {
+        sim_spawn(async move {
             while let Ok(mut frame) = upstream_receiver.recv().await {
                 let (msg_type, msg) = message_from_frame(&mut frame);
                 info!(
@@ -106,7 +109,7 @@ impl MockDownstream {
             }
         });
 
-        tokio::spawn(async move {
+        sim_spawn(async move {
             while let Ok(message) = proxy_receiver.recv().await {
                 let message_type = message.message_type();
                 let frame = StandardEitherFrame::<AnyMessage<'_>>::Sv2(
@@ -141,7 +144,7 @@ impl MockUpstream {
 
         let (proxy_sender, proxy_receiver) = async_channel::unbounded::<AnyMessage<'static>>();
 
-        tokio::spawn(async move {
+        sim_spawn(async move {
             let (downstream_receiver, downstream_sender) =
                 create_downstream(wait_for_client(listening_address).await)
                     .await
@@ -217,7 +220,7 @@ impl MockUpstream {
                 }
             }
 
-            tokio::spawn(async move {
+            sim_spawn(async move {
                 while let Ok(mut frame) = downstream_receiver.recv().await {
                     let (msg_type, msg) = message_from_frame(&mut frame);
                     info!(
@@ -246,7 +249,7 @@ impl MockUpstream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{interceptor::MessageDirection, start_sniffer};
+    use crate::{interceptor::MessageDirection, sim_test, start_sniffer};
     use std::net::TcpListener;
     use stratum_apps::stratum_core::{
         common_messages_sv2::{
@@ -256,7 +259,7 @@ mod tests {
         mining_sv2::MESSAGE_TYPE_OPEN_EXTENDED_MINING_CHANNEL,
     };
 
-    #[tokio::test]
+    sim_test! {
     async fn test_implicit_setup_connection() {
         let port = TcpListener::bind("127.0.0.1:0")
             .unwrap()
@@ -298,8 +301,9 @@ mod tests {
             )
             .await;
     }
+    }
 
-    #[tokio::test]
+    sim_test! {
     async fn test_assert_message_not_present() {
         let port = TcpListener::bind("127.0.0.1:0")
             .unwrap()
@@ -362,8 +366,9 @@ mod tests {
                 .await
         );
     }
+    }
 
-    #[tokio::test]
+    sim_test! {
     async fn test_setup_connection_wrong_protocol() {
         let port = TcpListener::bind("127.0.0.1:0")
             .unwrap()
@@ -404,5 +409,6 @@ mod tests {
                 MESSAGE_TYPE_SETUP_CONNECTION_ERROR,
             )
             .await;
+    }
     }
 }

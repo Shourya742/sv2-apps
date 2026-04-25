@@ -1,4 +1,5 @@
 #![allow(clippy::option_map_unit_fn)]
+use crate::sim_sleep;
 use async_channel::{Receiver, Sender};
 use num_format::{Locale, ToFormattedString};
 use primitive_types::U256;
@@ -111,21 +112,14 @@ pub async fn connect(
         .expect("Invalid pool address, use one of this formats: ip:port, domain:port");
     info!("Connecting to pool at {}", address);
     let socket = loop {
-        let pool = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(address)).await;
-        match pool {
-            Ok(result) => match result {
-                Ok(socket) => break socket,
-                Err(e) => {
-                    error!(
-                        "Failed to connect to Upstream role at {}, retrying in 5s: {}",
-                        address, e
-                    );
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-                }
-            },
-            Err(_) => {
-                error!("Pool is unresponsive, terminating");
-                std::process::exit(1);
+        match TcpStream::connect(address).await {
+            Ok(socket) => break socket,
+            Err(e) => {
+                error!(
+                    "Failed to connect to Upstream role at {}, retrying in 5s: {}",
+                    address, e
+                );
+                sim_sleep(Duration::from_secs(5)).await;
             }
         }
     };

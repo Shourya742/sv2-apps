@@ -4,10 +4,11 @@ use integration_tests_sv2::{
     *,
 };
 use jd_client_sv2::config::ConfigJDCMode;
+use std::time::Duration;
 use stratum_apps::stratum_core::{common_messages_sv2::*, job_declaration_sv2::*};
 
 // Pool propagates block via IPC
-#[tokio::test]
+sim_test! {
 async fn pool_propagates_block_with_bitcoin_core_ipc() {
     start_tracing();
     let bitcoin_core = start_bitcoin_core(DifficultyLevel::Low);
@@ -26,17 +27,17 @@ async fn pool_propagates_block_with_bitcoin_core_ipc() {
     let (translator, tproxy_addr, _) =
         start_sv2_translator(&[pool_addr], false, vec![], vec![], None, false).await;
     let (_minerd_process, _minerd_addr) = start_minerd(tproxy_addr, None, None, false).await;
-    let timeout = tokio::time::Duration::from_secs(60);
-    let poll_interval = tokio::time::Duration::from_secs(2);
-    let start_time = tokio::time::Instant::now();
+    let timeout = Duration::from_secs(60);
+    let poll_interval = Duration::from_secs(2);
+    let deadline_ms = sim_deadline_after(timeout);
     loop {
-        tokio::time::sleep(poll_interval).await;
+        sim_sleep(poll_interval).await;
         let new_block_hash = bitcoin_core.get_best_block_hash().unwrap();
         if new_block_hash != current_block_hash {
             shutdown_all!(pool, translator);
             return;
         }
-        if start_time.elapsed() > timeout {
+        if sim_deadline_expired(deadline_ms) {
             panic!(
                 "Pool with BitcoinCoreIpc should have propagated a new block within {} seconds",
                 timeout.as_secs()
@@ -44,9 +45,10 @@ async fn pool_propagates_block_with_bitcoin_core_ipc() {
         }
     }
 }
+}
 
 // JDC propagates block via IPC (PushSolution blocked to ensure IPC path)
-#[tokio::test]
+sim_test! {
 async fn jdc_propagates_block_with_bitcoin_core_ipc() {
     start_tracing();
     let (tp, _tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -98,11 +100,11 @@ async fn jdc_propagates_block_with_bitcoin_core_ipc() {
             MESSAGE_TYPE_ALLOCATE_MINING_JOB_TOKEN_SUCCESS,
         )
         .await;
-    let timeout = tokio::time::Duration::from_secs(60);
-    let poll_interval = tokio::time::Duration::from_secs(2);
-    let start_time = tokio::time::Instant::now();
+    let timeout = Duration::from_secs(60);
+    let poll_interval = Duration::from_secs(2);
+    let deadline_ms = sim_deadline_after(timeout);
     loop {
-        tokio::time::sleep(poll_interval).await;
+        sim_sleep(poll_interval).await;
         let new_block_hash = tp.get_best_block_hash().unwrap();
         if new_block_hash != current_block_hash {
             sniffer
@@ -115,7 +117,7 @@ async fn jdc_propagates_block_with_bitcoin_core_ipc() {
             shutdown_all!(pool, jdc, translator);
             return;
         }
-        if start_time.elapsed() > timeout {
+        if sim_deadline_expired(deadline_ms) {
             panic!(
                 "JDC with BitcoinCoreIpc should have propagated a new block within {} seconds",
                 timeout.as_secs()
@@ -123,9 +125,10 @@ async fn jdc_propagates_block_with_bitcoin_core_ipc() {
         }
     }
 }
+}
 
 // JDC solo mining mode with BitcoinCoreIpc (mode = SOLOMINING, no upstreams)
-#[tokio::test]
+sim_test! {
 async fn jdc_solo_mining_with_bitcoin_core_ipc() {
     start_tracing();
     let bitcoin_core = start_bitcoin_core(DifficultyLevel::Low);
@@ -148,21 +151,22 @@ async fn jdc_solo_mining_with_bitcoin_core_ipc() {
         start_sv2_translator(&[jdc_addr], false, vec![], vec![], None, false).await;
     let (_minerd, _) = start_minerd(tproxy_addr, None, None, false).await;
 
-    let timeout = tokio::time::Duration::from_secs(60);
-    let poll_interval = tokio::time::Duration::from_secs(2);
-    let start_time = tokio::time::Instant::now();
+    let timeout = Duration::from_secs(60);
+    let poll_interval = Duration::from_secs(2);
+    let deadline_ms = sim_deadline_after(timeout);
     loop {
-        tokio::time::sleep(poll_interval).await;
+        sim_sleep(poll_interval).await;
         let new_block_hash = bitcoin_core.get_best_block_hash().unwrap();
         if new_block_hash != current_block_hash {
             shutdown_all!(jdc, translator);
             return;
         }
-        if start_time.elapsed() > timeout {
+        if sim_deadline_expired(deadline_ms) {
             panic!(
                 "JDC solo mining with BitcoinCoreIpc should have propagated a new block within {} seconds",
                 timeout.as_secs()
             );
         }
     }
+}
 }

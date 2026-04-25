@@ -34,7 +34,7 @@ use stratum_apps::stratum_core::{
 // the translator and the pool is intercepted by a sniffer. The test checks if the translator and
 // the pool exchange the correct messages upon connection. And that the miner is able to submit
 // shares.
-#[tokio::test]
+sim_test! {
 async fn translate_sv1_to_sv2_successfully() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -86,10 +86,11 @@ async fn translate_sv1_to_sv2_successfully() {
         .await;
     shutdown_all!(translator, pool);
 }
+}
 
 // Demonstrates the scenario where TProxy falls back to the secondary pool
 // after the primary pool returns a `SetupConnection.Error`.
-#[tokio::test]
+sim_test! {
 async fn test_translator_fallback_on_setup_connection_error() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -170,10 +171,11 @@ async fn test_translator_fallback_on_setup_connection_error() {
         .await;
     shutdown_all!(translator, pool_2, pool_1);
 }
+}
 
 // Demonstrates the scenario where the primary pool returns an `OpenMiningChannel.Error`,
 // causing TProxy to fall back to the secondary pool.
-#[tokio::test]
+sim_test! {
 async fn test_translator_fallback_on_open_mining_message_error() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -261,11 +263,12 @@ async fn test_translator_fallback_on_open_mining_message_error() {
         .await;
     shutdown_all!(translator, pool_2, pool_1);
 }
+}
 
 // This test verifies that the translator sends keepalive jobs to downstream miners when no new
 // jobs are received from upstream, and that shares submitted for keepalive jobs are properly
 // received by the pool. Keepalive job_id(s) use the format `{original_job_id}#{counter}`.
-#[tokio::test]
+sim_test! {
 async fn test_translator_keepalive_job_sent_and_share_received_by_pool() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::High);
@@ -299,7 +302,7 @@ async fn test_translator_keepalive_job_sent_and_share_received_by_pool() {
         .await;
 
     // Wait for keepalive interval plus some buffer time
-    tokio::time::sleep(std::time::Duration::from_secs(
+    sim_sleep(std::time::Duration::from_secs(
         keepalive_interval_secs as u64 + 3,
     ))
     .await;
@@ -319,10 +322,11 @@ async fn test_translator_keepalive_job_sent_and_share_received_by_pool() {
         .await;
     shutdown_all!(translator, pool);
 }
+}
 
 // This test launches a tProxy in aggregated mode and leverages a MockUpstream to test the correct
 // functionalities of grouping extended channels.
-#[tokio::test]
+sim_test! {
 async fn aggregated_translator_correctly_deals_with_group_channels() {
     start_tracing();
     let (tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -421,7 +425,7 @@ async fn aggregated_translator_correctly_deals_with_group_channels() {
         minerd_vec.push(minerd_process);
 
         // wait a bit
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        sim_sleep(std::time::Duration::from_secs(1)).await;
 
         // assert no furter OpenExtendedMiningChannel messages are sent
         sniffer
@@ -565,10 +569,11 @@ async fn aggregated_translator_correctly_deals_with_group_channels() {
     }
     shutdown_all!(translator, pool);
 }
+}
 
 // This test launches a tProxy in non-aggregated mode and leverages a MockUpstream to test the
 // correct functionalities of grouping extended channels.
-#[tokio::test]
+sim_test! {
 async fn non_aggregated_translator_correctly_deals_with_group_channels() {
     start_tracing();
 
@@ -869,16 +874,17 @@ async fn non_aggregated_translator_correctly_deals_with_group_channels() {
     }
     shutdown_all!(translator, pool);
 }
+}
 
-/// This test launches a tProxy in non-aggregated mode and leverages a MockUpstream to test the
-/// correct behavior of handling SetGroupChannel messages.
-///
-/// We first send a SetGroupChannel message to set a group channel ID A and B, and then we send a
-/// NewExtendedMiningJob + SetNewPrevHash message pair to group channel ID A.
-///
-/// We then assert that all channels in group channel ID A must submit at least one share with
-/// job_id = 2, and channels in group channel ID B must NOT submit any shares with job_id = 2.
-#[tokio::test]
+// This test launches a tProxy in non-aggregated mode and leverages a MockUpstream to test the
+// correct behavior of handling SetGroupChannel messages.
+//
+// We first send a SetGroupChannel message to set a group channel ID A and B, and then we send a
+// NewExtendedMiningJob + SetNewPrevHash message pair to group channel ID A.
+//
+// We then assert that all channels in group channel ID A must submit at least one share with
+// job_id = 2, and channels in group channel ID B must NOT submit any shares with job_id = 2.
+sim_test! {
 async fn non_aggregated_translator_handles_set_group_channel_message() {
     start_tracing();
 
@@ -1102,13 +1108,14 @@ async fn non_aggregated_translator_handles_set_group_channel_message() {
     }
     translator.shutdown().await;
 }
+}
 
-/// This test launches a tProxy in non-aggregated mode and leverages a MockUpstream to test the
-/// correct behavior of handling CloseChannel messages.
-///
-/// First we close a single channel, and assert that no shares are submitted from it.
-/// Then we close the group channel, and assert that no shares are submitted from any channel.
-#[tokio::test]
+// This test launches a tProxy in non-aggregated mode and leverages a MockUpstream to test the
+// correct behavior of handling CloseChannel messages.
+//
+// First we close a single channel, and assert that no shares are submitted from it.
+// Then we close the group channel, and assert that no shares are submitted from any channel.
+sim_test! {
 async fn non_aggregated_translator_correctly_deals_with_close_channel_message() {
     start_tracing();
 
@@ -1278,7 +1285,7 @@ async fn non_aggregated_translator_correctly_deals_with_close_channel_message() 
     }
 
     // Small delay to let any in-flight messages arrive
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    sim_sleep(std::time::Duration::from_millis(100)).await;
 
     // let's wait until all open channels send at least 5 shares
     // if the closed channel sends a share, the test fails
@@ -1333,7 +1340,7 @@ async fn non_aggregated_translator_correctly_deals_with_close_channel_message() 
         .await;
 
     // wait enough time for any channels to submit some share (which they shouldn't)
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    sim_sleep(std::time::Duration::from_secs(5)).await;
 
     // no shares should arrive after the group channel is closed
     sniffer
@@ -1345,14 +1352,15 @@ async fn non_aggregated_translator_correctly_deals_with_close_channel_message() 
         .await;
     translator.shutdown().await;
 }
+}
 
-/// This test launches a tProxy in aggregated mode and leverages two MockUpstreams to test the
-/// correct behavior of handling CloseChannel messages.
-///
-/// We first send a CloseChannel message to a single channel, and assert that no shares are
-/// submitted from it. Then we send a CloseChannel message to the group channel, and assert that no
-/// shares are submitted from any channel.
-#[tokio::test]
+// This test launches a tProxy in aggregated mode and leverages two MockUpstreams to test the
+// correct behavior of handling CloseChannel messages.
+//
+// We first send a CloseChannel message to a single channel, and assert that no shares are
+// submitted from it. Then we send a CloseChannel message to the group channel, and assert that no
+// shares are submitted from any channel.
+sim_test! {
 async fn aggregated_translator_triggers_fallback_on_close_channel_message() {
     start_tracing();
 
@@ -1506,12 +1514,13 @@ async fn aggregated_translator_triggers_fallback_on_close_channel_message() {
         .await;
     translator.shutdown().await;
 }
+}
 
 // Verify's that the non-aggregated mode translator does not shut down if an
 // upstream message references a channel ID that is not associated with any
 // downstream in the tproxy.
 // See: https://github.com/stratum-mining/sv2-apps/issues/216
-#[tokio::test]
+sim_test! {
 async fn translator_does_not_shutdown_on_missing_downstream_channel() {
     start_tracing();
 
@@ -1638,21 +1647,22 @@ async fn translator_does_not_shutdown_on_missing_downstream_channel() {
     }));
     send_to_tproxy_a.send(set_target).await.unwrap();
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    sim_sleep(Duration::from_secs(1)).await;
 
     assert!(TcpListener::bind(tproxy_addr).await.is_err());
     translator.shutdown().await;
 }
+}
 
-/// This test verifies that in aggregated mode, a new downstream connection that arrives
-/// between a future NewExtendedMiningJob and its corresponding SetNewPrevHash will correctly
-/// receive the future job and be able to submit shares after SetNewPrevHash activates the job.
-///
-/// This is a regression test for the "Failed to set new prev hash: JobIdNotFound" error
-/// that occurred when new downstream channels were created while a future job was pending.
-///
-/// See: https://github.com/stratum-mining/sv2-apps/issues/223
-#[tokio::test]
+// This test verifies that in aggregated mode, a new downstream connection that arrives
+// between a future NewExtendedMiningJob and its corresponding SetNewPrevHash will correctly
+// receive the future job and be able to submit shares after SetNewPrevHash activates the job.
+//
+// This is a regression test for the "Failed to set new prev hash: JobIdNotFound" error
+// that occurred when new downstream channels were created while a future job was pending.
+//
+// See: https://github.com/stratum-mining/sv2-apps/issues/223
+sim_test! {
 async fn aggregated_translator_handles_downstream_connecting_during_future_job() {
     start_tracing();
 
@@ -1780,7 +1790,7 @@ async fn aggregated_translator_handles_downstream_connecting_during_future_job()
     minerd_vec.push(minerd_process_2);
 
     // Give time for the second minerd to connect and the channel to be created
-    tokio::time::sleep(Duration::from_millis(1000)).await;
+    sim_sleep(Duration::from_millis(1000)).await;
 
     // Now send SetNewPrevHash to activate the future job
     // Without the fix, this would cause "Failed to set new prev hash: JobIdNotFound"
@@ -1825,6 +1835,7 @@ async fn aggregated_translator_handles_downstream_connecting_during_future_job()
         .await;
     translator.shutdown().await;
 }
+}
 
 // This test verifies that the pool server continues accepting new connection
 // requests while performing handshakes with other clients. It also checks the
@@ -1835,13 +1846,13 @@ async fn aggregated_translator_handles_downstream_connecting_during_future_job()
 //
 // For more context see:
 // https://github.com/stratum-mining/sv2-apps/issues/241
-#[tokio::test]
+sim_test! {
 async fn pool_does_not_hang_on_no_handshake() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
     let (pool, pool_addr, _) = start_pool(sv2_tp_config(tp_addr), vec![], vec![], false).await;
     let ephemeral_stream = TcpStream::connect(pool_addr).await.unwrap();
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    sim_sleep(Duration::from_secs(1)).await;
 
     let (pool_translator_sniffer, pool_translator_sniffer_addr) =
         start_sniffer("0", pool_addr, false, vec![], None);
@@ -1865,7 +1876,7 @@ async fn pool_does_not_hang_on_no_handshake() {
         )
         .await;
     // Sleep for time just more than `NOISE_HANDSHAKE_TIMEOUT`
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    sim_sleep(Duration::from_secs(10)).await;
     let buf = vec![1];
 
     // the OS may not immediately detect that the connection was closed after the handshake
@@ -1879,11 +1890,12 @@ async fn pool_does_not_hang_on_no_handshake() {
         if value.is_err() || retries >= 100 {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        sim_sleep(Duration::from_millis(50)).await;
         retries += 1;
     }
     assert!(value.is_err());
     shutdown_all!(translator, pool);
+}
 }
 
 // This test verifies that when multiple downstream miners connect very quickly
@@ -1895,7 +1907,7 @@ async fn pool_does_not_hang_on_no_handshake() {
 // only one `OpenExtendedMiningChannel` must be sent upstream.
 //
 // More info can be found here: https://github.com/stratum-mining/sv2-apps/issues/157
-#[tokio::test]
+sim_test! {
 async fn tproxy_sends_single_open_extended_mining_channel_in_aggregated_mode() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::High);
@@ -1950,12 +1962,13 @@ async fn tproxy_sends_single_open_extended_mining_channel_in_aggregated_mode() {
 
     shutdown_all!(pool, tproxy);
 }
+}
 
 // This test verifies whether we can spawn multiple tproxy in the
 // same process.
 //
 // More info here: https://github.com/stratum-mining/sv2-apps/issues/430
-#[tokio::test]
+sim_test! {
 async fn multiple_tproxy_sessions() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::High);
@@ -2006,4 +2019,5 @@ async fn multiple_tproxy_sessions() {
         .await;
 
     shutdown_all!(pool, tproxy_1, tproxy_2);
+}
 }

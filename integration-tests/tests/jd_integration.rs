@@ -18,7 +18,7 @@ use stratum_apps::stratum_core::{
 //
 // It is performing the verification by shutding down a jd-client connected to a jd-server and then
 // starting a new jd-client that connects to the same jd-server successfully.
-#[tokio::test]
+sim_test! {
 async fn jds_should_not_panic_if_jdc_shutsdown() {
     start_tracing();
     let (tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -58,13 +58,14 @@ async fn jds_should_not_panic_if_jdc_shutsdown() {
         .await;
     shutdown_all!(jdc_1, pool);
 }
+}
 
 // This test verifies that mode state is isolated per JDC instance.
 //
 // We start one JDC in solo mining mode (no upstreams) and then start another
 // JDC in full template mode (with upstream). The solo instance must not start
 // behaving like full-template mode after the second instance activates.
-#[tokio::test]
+sim_test! {
 async fn multiple_jdc_sessions() {
     start_tracing();
     let (tp, tp_addr) = start_template_provider(Some(1), DifficultyLevel::Low);
@@ -140,12 +141,13 @@ async fn multiple_jdc_sessions() {
 
     shutdown_all!(solo_jdc, full_jdc, pool);
 }
+}
 
 // This test verifies that jd-client exchange SetupConnection messages with a Template Provider.
 //
 // Note that jd-client starts to exchange messages with the Template Provider after it has accepted
 // a downstream connection.
-#[tokio::test]
+sim_test! {
 async fn jdc_tp_success_setup() {
     start_tracing();
     let (tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -175,9 +177,10 @@ async fn jdc_tp_success_setup() {
         .await;
     shutdown_all!(translator, jdc, pool);
 }
+}
 
 // This test verifies that JDS rejects SetupConnection with a non-JD protocol.
-#[tokio::test]
+sim_test! {
 async fn jds_reject_setup_connection_with_non_job_declaration_protocol() {
     start_tracing();
     let (tp, _tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -216,9 +219,10 @@ async fn jds_reject_setup_connection_with_non_job_declaration_protocol() {
 
     shutdown_all!(pool);
 }
+}
 
 // This test verifies that JDS rejects SetupConnection without DECLARE_TX_DATA flag.
-#[tokio::test]
+sim_test! {
 async fn jds_reject_setup_connection_without_declare_tx_data_flag() {
     start_tracing();
     let (tp, _tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -257,9 +261,10 @@ async fn jds_reject_setup_connection_without_declare_tx_data_flag() {
 
     shutdown_all!(pool);
 }
+}
 
 // This test verifies that JDS rejects DeclareMiningJob when mining_job_token is invalid.
-#[tokio::test]
+sim_test! {
 async fn jds_reject_declare_mining_job_with_invalid_mining_job_token() {
     start_tracing();
     let (tp, _tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -380,10 +385,11 @@ async fn jds_reject_declare_mining_job_with_invalid_mining_job_token() {
 
     shutdown_all!(pool);
 }
+}
 
 // This test verifies that a SetCustomMiningJob token cannot be reused after a successful
 // SetCustomMiningJob flow has already consumed it.
-#[tokio::test]
+sim_test! {
 async fn pool_rejects_reused_set_custom_mining_job_token() {
     start_tracing();
     let (tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -483,13 +489,14 @@ async fn pool_rejects_reused_set_custom_mining_job_token() {
 
     shutdown_all!(translator, jdc, pool);
 }
+}
 
 // This test verifies that JDS does not exit when it receives a `SubmitSolution`
 // while still expecting a `ProvideMissingTransactionsSuccess`.
 //
 // It is performing the verification by connecting to JDS after the message exchange
 // to check whether it remains alive.
-#[tokio::test]
+sim_test! {
 async fn jds_receive_solution_while_processing_declared_job_test() {
     start_tracing();
     let (tp_1, _tp_addr_1) = start_template_provider(None, DifficultyLevel::Low);
@@ -579,6 +586,7 @@ async fn jds_receive_solution_while_processing_declared_job_test() {
     assert!(tokio::net::TcpListener::bind(jds_addr).await.is_err());
     shutdown_all!(translator, jdc, pool);
 }
+}
 
 // This test ensures that JDS does not exit upon receiving a `ProvideMissingTransactionsSuccess`
 // message containing a transaction set that differs from the `tx_short_hash_list`
@@ -586,7 +594,7 @@ async fn jds_receive_solution_while_processing_declared_job_test() {
 //
 // It is performing the verification by connecting to JDS after the message exchange
 // to check whether it remains alive
-#[tokio::test]
+sim_test! {
 async fn jds_wont_exit_upon_receiving_unexpected_txids_in_provide_missing_transaction_success() {
     start_tracing();
     let (tp_1, _tp_addr_1) = start_template_provider(None, DifficultyLevel::Low);
@@ -676,10 +684,11 @@ async fn jds_wont_exit_upon_receiving_unexpected_txids_in_provide_missing_transa
     assert!(tokio::net::TcpListener::bind(jds_addr).await.is_err());
     shutdown_all!(translator, jdc, pool);
 }
+}
 
 // This test launches a JDC and leverages a MockDownstream to test the correct functionalities of
 // grouping extended channels.
-#[tokio::test]
+sim_test! {
 async fn jdc_group_extended_channels() {
     start_tracing();
     let sv2_interval = Some(5);
@@ -801,7 +810,7 @@ async fn jdc_group_extended_channels() {
     );
 
     // wait a bit
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    sim_sleep(std::time::Duration::from_secs(1)).await;
 
     // make sure there's no extra NewExtendedMiningJob messages
     assert!(
@@ -846,7 +855,7 @@ async fn jdc_group_extended_channels() {
     );
 
     // wait a bit
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    sim_sleep(std::time::Duration::from_secs(1)).await;
 
     // make sure there's no extra SetNewPrevHash messages
     assert!(
@@ -861,10 +870,11 @@ async fn jdc_group_extended_channels() {
     );
     shutdown_all!(jdc, pool);
 }
+}
 
 // This test launches a JDC and leverages a MockDownstream to test the correct functionalities of
 // grouping standard channels.
-#[tokio::test]
+sim_test! {
 async fn jdc_group_standard_channels() {
     start_tracing();
     let sv2_interval = Some(5);
@@ -983,7 +993,7 @@ async fn jdc_group_standard_channels() {
     );
 
     // wait a bit
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    sim_sleep(std::time::Duration::from_secs(1)).await;
 
     // make sure there's no extra NewExtendedMiningJob messages
     assert!(
@@ -1040,7 +1050,7 @@ async fn jdc_group_standard_channels() {
     );
 
     // wait a bit
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    sim_sleep(std::time::Duration::from_secs(1)).await;
 
     // make sure there's no extra SetNewPrevHash messages
     assert!(
@@ -1055,10 +1065,11 @@ async fn jdc_group_standard_channels() {
     );
     shutdown_all!(jdc, pool);
 }
+}
 
 // This test launches a JDC and leverages a MockDownstream to test the correct functionalities of
 // NOT grouping standard channels when REQUIRES_STANDARD_JOBS is set.
-#[tokio::test]
+sim_test! {
 async fn jdc_require_standard_jobs_set_does_not_group_standard_channels() {
     start_tracing();
     let sv2_interval = Some(5);
@@ -1225,4 +1236,5 @@ async fn jdc_require_standard_jobs_set_does_not_group_standard_channels() {
     }
 
     shutdown_all!(jdc, pool);
+}
 }

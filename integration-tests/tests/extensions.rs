@@ -17,9 +17,9 @@ use stratum_apps::stratum_core::{
 };
 use tracing::info;
 
-/// Tests that the translator successfully negotiates extension 0x0002 with the pool
-/// and sends user_identity TLV in SubmitSharesExtended messages.
-#[tokio::test]
+// Tests that the translator successfully negotiates extension 0x0002 with the pool
+// and sends user_identity TLV in SubmitSharesExtended messages.
+sim_test! {
 async fn test_extension_negotiation_with_tlv_in_submit_shares() {
     start_tracing();
     // Extension 0x0002 for worker hashrate tracking
@@ -211,4 +211,5 @@ async fn test_extension_negotiation_with_tlv_in_submit_shares() {
         )
         .await;
     shutdown_all!(translator, pool);
+}
 }

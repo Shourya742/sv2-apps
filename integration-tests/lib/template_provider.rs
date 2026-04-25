@@ -447,14 +447,15 @@ impl Drop for TemplateProvider {
 #[cfg(test)]
 mod tests {
     use super::{DifficultyLevel, TemplateProvider};
-    use crate::utils::get_available_address;
+    use crate::{sim_test, utils::get_available_address};
 
-    #[tokio::test]
+    sim_test! {
     async fn test_create_mempool_transaction() {
         let address = get_available_address();
         let port = address.port();
         let tp = TemplateProvider::start(port, 1, DifficultyLevel::Low);
         assert!(tp.fund_wallet().is_ok());
         assert!(tp.create_mempool_transaction().is_ok());
+    }
     }
 }

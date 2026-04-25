@@ -3,10 +3,11 @@ use integration_tests_sv2::{
     template_provider::DifficultyLevel,
     *,
 };
+use std::time::Duration;
 use stratum_apps::stratum_core::{job_declaration_sv2::*, template_distribution_sv2::*};
 
 // Block propagated from JDC to TP
-#[tokio::test]
+sim_test! {
 async fn propagated_from_jdc_to_tp() {
     start_tracing();
     let (tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -45,7 +46,8 @@ async fn propagated_from_jdc_to_tp() {
         )
         .await;
     let new_block_hash = tp.get_best_block_hash().unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+    sim_sleep(Duration::from_millis(1000)).await;
     assert_ne!(current_block_hash, new_block_hash);
     shutdown_all!(translator, jdc, pool);
+}
 }

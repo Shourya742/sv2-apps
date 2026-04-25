@@ -1,7 +1,7 @@
 use integration_tests_sv2::{interceptor::MessageDirection, template_provider::DifficultyLevel, *};
 use stratum_apps::stratum_core::job_declaration_sv2::*;
 
-#[tokio::test]
+sim_test! {
 async fn jds_ask_for_missing_transactions() {
     start_tracing();
     let (tp_1, _tp_addr_1) = start_template_provider(None, DifficultyLevel::Low);
@@ -50,4 +50,5 @@ async fn jds_ask_for_missing_transactions() {
         )
         .await;
     shutdown_all!(translator, jdc, pool);
+}
 }

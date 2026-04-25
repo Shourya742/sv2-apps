@@ -13,7 +13,7 @@ use stratum_apps::stratum_core::mining_sv2::*;
 // 1. Pool + SV2 Mining Device (standard channel) Pool role exposes: client metrics (connections,
 //    channels, shares, hashrate) Pool has NO upstream, so server metrics should be absent.
 // ---------------------------------------------------------------------------
-#[tokio::test]
+sim_test! {
 async fn pool_monitoring_with_sv2_mining_device() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -60,13 +60,14 @@ async fn pool_monitoring_with_sv2_mining_device() {
 
     shutdown_all!(pool);
 }
+}
 
 // ---------------------------------------------------------------------------
 // 2. Pool + tProxy + SV1 miner (non-aggregated) Pool: client metrics (1 SV2 client = tProxy,
 //    extended channel, shares) tProxy: server metrics (upstream channel to pool), SV1 metrics (1
 //    SV1 client) tProxy has no SV2 downstreams so sv2_clients_total should be absent
 // ---------------------------------------------------------------------------
-#[tokio::test]
+sim_test! {
 async fn pool_and_tproxy_monitoring_with_sv1_miner() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -124,12 +125,13 @@ async fn pool_and_tproxy_monitoring_with_sv1_miner() {
 
     shutdown_all!(pool, tproxy);
 }
+}
 
 // ---------------------------------------------------------------------------
 // 3. Pool + JDC + tProxy + 2 SV1 miners (aggregated) tProxy aggregated: 2 SV1 clients, 1 upstream
 //    extended channel Pool: 1 SV2 client (JDC), shares accepted
 // ---------------------------------------------------------------------------
-#[tokio::test]
+sim_test! {
 async fn jd_aggregated_topology_monitoring() {
     start_tracing();
     let (tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -197,12 +199,13 @@ async fn jd_aggregated_topology_monitoring() {
 
     shutdown_all!(pool, jdc, tproxy);
 }
+}
 
 // ---------------------------------------------------------------------------
 // 4. Block found detection via metrics Uses JDC topology (which finds regtest blocks). After a
 //    block is found, the pool's sv2_client_blocks_found_total metric should be >= 1.
 // ---------------------------------------------------------------------------
-#[tokio::test]
+sim_test! {
 async fn block_found_detected_in_pool_metrics() {
     use stratum_apps::stratum_core::template_distribution_sv2::*;
 
@@ -244,4 +247,5 @@ async fn block_found_detected_in_pool_metrics() {
     assert_metric_eq(&pool_metrics, "sv2_clients_total", 1.0);
 
     shutdown_all!(pool, jdc, tproxy);
+}
 }

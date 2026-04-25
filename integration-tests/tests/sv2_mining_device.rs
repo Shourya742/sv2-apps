@@ -1,7 +1,7 @@
 use integration_tests_sv2::{interceptor::MessageDirection, template_provider::DifficultyLevel, *};
 use stratum_apps::stratum_core::common_messages_sv2::*;
 
-#[tokio::test]
+sim_test! {
 async fn sv2_mining_device_and_pool_success() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -18,4 +18,5 @@ async fn sv2_mining_device_and_pool_success() {
         )
         .await;
     pool.shutdown().await;
+}
 }

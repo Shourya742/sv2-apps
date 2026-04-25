@@ -1,7 +1,7 @@
 use integration_tests_sv2::{interceptor::MessageDirection, template_provider::DifficultyLevel, *};
 use stratum_apps::stratum_core::mining_sv2::*;
 
-#[tokio::test]
+sim_test! {
 async fn jdc_submit_shares_success() {
     start_tracing();
     let (tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -28,4 +28,5 @@ async fn jdc_submit_shares_success() {
         )
         .await;
     shutdown_all!(translator, jdc, pool);
+}
 }

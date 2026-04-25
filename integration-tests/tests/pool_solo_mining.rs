@@ -106,7 +106,7 @@ fn assert_payout_percentage(payout_info: &PayoutInfo, expected_percentages: &[(S
     }
 }
 
-#[tokio::test]
+sim_test! {
 async fn pool_solo_mining_invalid_payout_address() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -197,8 +197,9 @@ async fn pool_solo_mining_invalid_payout_address() {
 
     shutdown_all!(pool);
 }
+}
 
-#[tokio::test]
+sim_test! {
 async fn pool_solo_mining_wrong_user_identity() {
     start_tracing();
     let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -283,8 +284,9 @@ async fn pool_solo_mining_wrong_user_identity() {
 
     shutdown_all!(pool);
 }
+}
 
-#[tokio::test]
+sim_test! {
 async fn pool_solo_mining_random_user_identity() {
     start_tracing();
     let (tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -447,8 +449,9 @@ async fn pool_solo_mining_random_user_identity() {
 
     shutdown_all!(pool);
 }
+}
 
-#[tokio::test]
+sim_test! {
 async fn pool_solo_mining_legacy_pattern() {
     start_tracing();
     let (tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -611,8 +614,9 @@ async fn pool_solo_mining_legacy_pattern() {
 
     shutdown_all!(pool);
 }
+}
 
-#[tokio::test]
+sim_test! {
 async fn pool_solo_mining_solo_pattern() {
     start_tracing();
     let (tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -779,8 +783,9 @@ async fn pool_solo_mining_solo_pattern() {
 
     shutdown_all!(pool);
 }
+}
 
-#[tokio::test]
+sim_test! {
 async fn pool_solo_mining_full_donate() {
     start_tracing();
     let (tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -943,8 +948,9 @@ async fn pool_solo_mining_full_donate() {
 
     shutdown_all!(pool);
 }
+}
 
-#[tokio::test]
+sim_test! {
 async fn pool_solo_mining_full_donate_no_worker_name() {
     start_tracing();
     let (tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -1107,8 +1113,9 @@ async fn pool_solo_mining_full_donate_no_worker_name() {
 
     shutdown_all!(pool);
 }
+}
 
-#[tokio::test]
+sim_test! {
 async fn pool_solo_mining_partial_donation() {
     start_tracing();
     let (tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
@@ -1293,4 +1300,5 @@ async fn pool_solo_mining_partial_donation() {
         .await;
 
     shutdown_all!(pool);
+}
 }
