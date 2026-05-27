@@ -123,8 +123,23 @@ impl TranslatorSv2 {
                 port: u.port,
                 authority_pubkey: u.authority_pubkey,
                 tried_or_flagged: false,
+                user_identity: u.user_identity.clone(),
             })
             .collect::<Vec<_>>();
+
+        let has_any_per_upstream = upstream_addresses
+            .iter()
+            .any(|u| !u.user_identity.is_empty());
+        let has_missing = upstream_addresses
+            .iter()
+            .any(|u| u.user_identity.is_empty());
+        if has_any_per_upstream && has_missing {
+            warn!(
+                "Some upstream entries have `user_identity` set and some do not. \
+                 Upstreams without a per-upstream identity will use the global `user_identity`, \
+                 which may be rejected by pools expecting a different identity format."
+            );
+        }
 
         let downstream_addr: SocketAddr = SocketAddr::new(
             self.config.downstream_address.parse().unwrap(),
@@ -466,6 +481,8 @@ impl TranslatorSv2 {
                 .await
                 {
                     Ok(()) => {
+                        sv1_server_instance.set_upstream_index(i);
+
                         // starting sv1 server instance
                         if let Err(e) = sv1_server_instance
                             .clone()

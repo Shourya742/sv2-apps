@@ -42,3 +42,4 @@ hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 
 [dev-dependencies]
 sha2 = "0.10.6"
+toml = "0.8"

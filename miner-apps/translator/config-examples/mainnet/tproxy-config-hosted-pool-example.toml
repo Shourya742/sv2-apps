@@ -59,9 +59,11 @@ job_keepalive_interval_secs = 60
 address = "75.119.150.111"
 port = 3333
 authority_pubkey = "9auqWEzQDVyd2oe1JVGFLMLHZtCo2FFqZwtKA5gd9xbuEu7PH72"
+# user_identity = "sri/solo/bc1q..."  # optional: overrides the global user_identity for this pool
 
 # Braiins Pool Backup Pool
 [[upstreams]]
-address = "107.170.42.64" 
+address = "107.170.42.64"
 port = 3333
 authority_pubkey = "9awtMD5KQgvRUh2yFbjVeT7b6hjipWcAsQHd6wEhgtDT9soosna"
+# user_identity = "bc1q....worker"   # optional: overrides the global user_identity for this pool

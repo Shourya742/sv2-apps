@@ -74,6 +74,8 @@ pub struct Upstream {
     pub port: u16,
     /// The Secp256k1 public key used to authenticate the upstream authority.
     pub authority_pubkey: Secp256k1PublicKey,
+    #[serde(default)]
+    pub user_identity: String,
 }
 
 impl Upstream {
@@ -83,6 +85,7 @@ impl Upstream {
             address,
             port,
             authority_pubkey,
+            user_identity: String::new(),
         }
     }
 }
@@ -480,5 +483,77 @@ mod tests {
 
         assert!(!config.downstream_difficulty_config.enable_vardiff);
         assert!(!config.aggregate_channels);
+    }
+
+    #[test]
+    fn test_upstream_user_identity_toml_present() {
+        let toml = r#"
+            address = "127.0.0.1"
+            port = 4444
+            authority_pubkey = "9bDuixKmZqAJnrmP746n8zU1wyAQRrus7th9dxnkPg6RzQvCnan"
+            user_identity = "sri/solo/bc1qtest"
+        "#;
+        let upstream: Upstream = toml::from_str(toml).unwrap();
+        assert_eq!(upstream.user_identity, "sri/solo/bc1qtest");
+    }
+
+    #[test]
+    fn test_upstream_user_identity_toml_absent() {
+        let toml = r#"
+            address = "127.0.0.1"
+            port = 4444
+            authority_pubkey = "9bDuixKmZqAJnrmP746n8zU1wyAQRrus7th9dxnkPg6RzQvCnan"
+        "#;
+        let upstream: Upstream = toml::from_str(toml).unwrap();
+        assert_eq!(upstream.user_identity, "");
+    }
+
+    #[test]
+    fn test_upstream_user_identity_toml_empty_string() {
+        let toml = r#"
+            address = "127.0.0.1"
+            port = 4444
+            authority_pubkey = "9bDuixKmZqAJnrmP746n8zU1wyAQRrus7th9dxnkPg6RzQvCnan"
+            user_identity = ""
+        "#;
+        let upstream: Upstream = toml::from_str(toml).unwrap();
+        assert_eq!(upstream.user_identity, "");
+    }
+
+    #[test]
+    fn test_multi_upstream_mixed_identity_toml() {
+        let pubkey = "9bDuixKmZqAJnrmP746n8zU1wyAQRrus7th9dxnkPg6RzQvCnan";
+        let toml = format!(
+            r#"
+            downstream_address = "0.0.0.0"
+            downstream_port = 34255
+            max_supported_version = 2
+            min_supported_version = 2
+            downstream_extranonce2_size = 8
+            user_identity = "global_identity"
+            aggregate_channels = false
+
+            [downstream_difficulty_config]
+            min_individual_miner_hashrate = 10000000.0
+            shares_per_minute = 6.0
+            enable_vardiff = false
+            job_keepalive_interval_secs = 60
+
+            [[upstreams]]
+            address = "127.0.0.1"
+            port = 3333
+            authority_pubkey = "{pubkey}"
+            user_identity = "sri/solo/bc1qprimary"
+
+            [[upstreams]]
+            address = "192.168.1.1"
+            port = 3333
+            authority_pubkey = "{pubkey}"
+            "#
+        );
+        let config: TranslatorConfig = toml::from_str(&toml).unwrap();
+        assert_eq!(config.upstreams.len(), 2);
+        assert_eq!(config.upstreams[0].user_identity, "sri/solo/bc1qprimary");
+        assert_eq!(config.upstreams[1].user_identity, "");
     }
 }
