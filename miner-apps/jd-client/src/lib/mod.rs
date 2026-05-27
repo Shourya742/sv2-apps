@@ -298,8 +298,23 @@ impl JobDeclaratorClient {
                 jds_port: u.jds_port,
                 authority_pubkey: u.authority_pubkey,
                 tried_or_flagged: false,
+                user_identity: u.user_identity.clone(),
             })
             .collect();
+
+        let has_any_per_upstream = upstream_addresses
+            .iter()
+            .any(|u| !u.user_identity.is_empty());
+        let has_missing = upstream_addresses
+            .iter()
+            .any(|u| u.user_identity.is_empty());
+        if has_any_per_upstream && has_missing {
+            warn!(
+                "Some upstream entries have `user_identity` set and some do not. \
+                 Upstreams without a per-upstream identity will use the global `user_identity`, \
+                 which may be rejected by pools expecting a different identity format."
+            );
+        }
 
         channel_manager
             .clone()
@@ -342,7 +357,9 @@ impl JobDeclaratorClient {
                 )
                 .await
             {
-                Ok((upstream, job_declarator)) => {
+                Ok((upstream, job_declarator, upstream_index)) => {
+                    initial_channel_manager.set_upstream_index(upstream_index);
+
                     upstream
                         .start(
                             self.config.min_supported_version(),
@@ -485,7 +502,9 @@ impl JobDeclaratorClient {
                         )
                         .await
                     {
-                        Ok((upstream, job_declarator)) => {
+                        Ok((upstream, job_declarator, upstream_index)) => {
+                            channel_manager.set_upstream_index(upstream_index);
+
                             upstream
                                 .start(
                                     self.config.min_supported_version(),
@@ -679,7 +698,7 @@ impl JobDeclaratorClient {
         fallback_coordinator: FallbackCoordinator,
         mode: JDMode,
         task_manager: Arc<TaskManager>,
-    ) -> Result<(Upstream, JobDeclarator), JDCErrorKind> {
+    ) -> Result<(Upstream, JobDeclarator, usize), JDCErrorKind> {
         const MAX_RETRIES: usize = 3;
         let upstream_len = upstreams.len();
         for (i, upstream_entry) in upstreams.iter_mut().enumerate() {
@@ -733,9 +752,9 @@ impl JobDeclaratorClient {
                 )
                 .await
                 {
-                    Ok(pair) => {
+                    Ok((upstream, jd)) => {
                         upstream_entry.tried_or_flagged = true;
-                        return Ok(pair);
+                        return Ok((upstream, jd, i));
                     }
                     Err(e) => {
                         tracing::error!("Upstream and JDS connection terminated");

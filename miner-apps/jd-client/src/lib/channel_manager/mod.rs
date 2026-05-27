@@ -3,7 +3,7 @@ use std::{
     net::SocketAddr,
     sync::{
         atomic::{AtomicU32, AtomicUsize, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
 };
 
@@ -59,7 +59,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     channel_manager::downstream_message_handler::RouteMessageTo,
-    config::JobDeclaratorClientConfig,
+    config::{JobDeclaratorClientConfig, Upstream},
     downstream::Downstream,
     error::{self, Action, JDCError, JDCErrorKind, JDCResult, LoopControl},
     jd_mode::JDMode,
@@ -298,7 +298,9 @@ pub struct ChannelManager {
     miner_tag_string: String,
     share_batch_size: SharesBatchSize,
     shares_per_minute: SharesPerMinute,
-    user_identity: String,
+    upstream_index: Arc<OnceLock<usize>>,
+    upstreams: Arc<Vec<Upstream>>,
+    global_user_identity: String,
     reserved_downstream_rollable_extranonce_size: u8,
     /// This represent the current state of Upstream channel
     /// 1. NoChannel: No active upstream connection.
@@ -435,7 +437,9 @@ impl ChannelManager {
             share_batch_size: config.share_batch_size(),
             shares_per_minute: config.shares_per_minute(),
             miner_tag_string: config.jdc_signature().to_string(),
-            user_identity: config.user_identity().to_string(),
+            upstream_index: Arc::new(OnceLock::new()),
+            upstreams: Arc::new(config.upstreams().clone()),
+            global_user_identity: config.user_identity().to_string(),
             reserved_downstream_rollable_extranonce_size: config
                 .reserved_downstream_rollable_extranonce_size(),
             upstream_state: AtomicUpstreamState::new(UpstreamState::SoloMining),
@@ -443,6 +447,22 @@ impl ChannelManager {
         };
 
         Ok(channel_manager)
+    }
+
+    pub fn set_upstream_index(&self, index: usize) {
+        self.upstream_index
+            .set(index)
+            .expect("upstream index already set");
+    }
+
+    fn read_identity(&self) -> String {
+        let index = *self.upstream_index.get().expect("upstream index not set");
+        let per_upstream = &self.upstreams[index].user_identity;
+        if per_upstream.is_empty() {
+            self.global_user_identity.clone()
+        } else {
+            per_upstream.clone()
+        }
     }
 
     // Bootstraps a group channel with the given parameters.
@@ -963,11 +983,9 @@ impl ChannelManager {
                             .is_ok()
                         {
                             let mut upstream_message = downstream_channel_request;
-                            upstream_message.user_identity = self
-                                .user_identity
-                                .clone()
-                                .try_into()
-                                .map_err(JDCError::shutdown)?;
+                            let identity = self.read_identity();
+                            upstream_message.user_identity =
+                                identity.try_into().map_err(JDCError::shutdown)?;
                             upstream_message.request_id = 1;
                             // The upstream extended channel is opened once and its
                             // `extranonce_size` is fixed. Size its rollable region to fit:
@@ -1046,8 +1064,9 @@ impl ChannelManager {
                             // extended downstream that attaches to this upstream.
                             let upstream_min_extranonce_size = (JDC_LOCAL_PREFIX_BYTES as u16)
                                 + self.reserved_downstream_rollable_extranonce_size as u16;
+                            let identity = self.read_identity();
                             let upstream_open = OpenExtendedMiningChannel {
-                                user_identity: self.user_identity.clone().try_into().unwrap(),
+                                user_identity: identity.try_into().unwrap(),
                                 request_id: 1,
                                 nominal_hash_rate: downstream_channel_request.nominal_hash_rate,
                                 max_target: downstream_channel_request.max_target,
@@ -1137,10 +1156,9 @@ impl ChannelManager {
                 token_to_allocate
             );
 
+            let identifier = self.read_identity();
             let message = JobDeclaration::AllocateMiningJobToken(AllocateMiningJobToken {
-                user_identifier: self
-                    .user_identity
-                    .to_string()
+                user_identifier: identifier
                     .try_into()
                     .expect("Static string should always convert"),
                 request_id,

@@ -307,6 +307,8 @@ pub struct Upstream {
     // The network address of the JDS.
     pub jds_address: String,
     pub jds_port: u16,
+    #[serde(default)]
+    pub user_identity: String,
 }
 
 impl Upstream {
@@ -324,6 +326,61 @@ impl Upstream {
             pool_port,
             jds_address,
             jds_port,
+            user_identity: String::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_PUBKEY: &str = "9bDuixKmZqAJnrmP746n8zU1wyAQRrus7th9dxnkPg6RzQvCnan";
+
+    #[test]
+    fn test_upstream_user_identity_toml_present() {
+        let toml = format!(
+            r#"
+            authority_pubkey = "{TEST_PUBKEY}"
+            pool_address = "127.0.0.1"
+            pool_port = 3333
+            jds_address = "127.0.0.1"
+            jds_port = 3334
+            user_identity = "bc1qfallback.worker"
+            "#
+        );
+        let upstream: Upstream = toml::from_str(&toml).unwrap();
+        assert_eq!(upstream.user_identity, "bc1qfallback.worker");
+    }
+
+    #[test]
+    fn test_upstream_user_identity_toml_absent() {
+        let toml = format!(
+            r#"
+            authority_pubkey = "{TEST_PUBKEY}"
+            pool_address = "127.0.0.1"
+            pool_port = 3333
+            jds_address = "127.0.0.1"
+            jds_port = 3334
+            "#
+        );
+        let upstream: Upstream = toml::from_str(&toml).unwrap();
+        assert_eq!(upstream.user_identity, "");
+    }
+
+    #[test]
+    fn test_upstream_user_identity_toml_empty_string() {
+        let toml = format!(
+            r#"
+            authority_pubkey = "{TEST_PUBKEY}"
+            pool_address = "127.0.0.1"
+            pool_port = 3333
+            jds_address = "127.0.0.1"
+            jds_port = 3334
+            user_identity = ""
+            "#
+        );
+        let upstream: Upstream = toml::from_str(&toml).unwrap();
+        assert_eq!(upstream.user_identity, "");
     }
 }
