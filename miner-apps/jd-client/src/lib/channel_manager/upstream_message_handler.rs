@@ -163,10 +163,9 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
                 // prefix is bounded by `total_extranonce_len`).
                 let extranonce_prefix = ExtranoncePrefix::from_wire(msg.extranonce_prefix.to_vec())
                     .expect("prefix length already validated by allocator");
-                let channel_identity = self.read_identity();
                 let mut extended_channel = ExtendedChannel::new(
                     msg.channel_id,
-                    channel_identity,
+                    self.user_identity().to_string(),
                     extranonce_prefix,
                     Target::from_le_bytes(msg.target.inner_as_ref().try_into().unwrap()),
                     hashrate,

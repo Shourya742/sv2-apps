@@ -2398,8 +2398,7 @@ async fn tproxy_sends_per_upstream_identity() {
     const PER_UPSTREAM_IDENTITY: &str = "bc1qtest.worker";
 
     let (translator, tproxy_addr, _) = start_sv2_translator_with_identities(
-        &[(sniffer_addr, Some(PER_UPSTREAM_IDENTITY.to_string()))],
-        "global_identity",
+        &[(sniffer_addr, PER_UPSTREAM_IDENTITY.to_string())],
         false,
         vec![],
         vec![],
@@ -2481,10 +2480,9 @@ async fn tproxy_per_upstream_identity_switches_on_fallback() {
 
     let (translator, tproxy_addr, _) = start_sv2_translator_with_identities(
         &[
-            (sniffer_addr_1, Some(PRIMARY_IDENTITY.to_string())),
-            (sniffer_addr_2, Some(FALLBACK_IDENTITY.to_string())),
+            (sniffer_addr_1, PRIMARY_IDENTITY.to_string()),
+            (sniffer_addr_2, FALLBACK_IDENTITY.to_string()),
         ],
-        "global_identity",
         false,
         vec![],
         vec![],

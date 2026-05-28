@@ -35,12 +35,8 @@ pub struct TranslatorConfig {
     pub min_supported_version: u16,
     /// The size of the extranonce2 field for downstream mining connections.
     pub downstream_extranonce2_size: u16,
-    /// The user identity/username to use when connecting to the pool.
-    /// This will be appended with a counter for each mining channel (e.g., username.miner1,
-    /// username.miner2).
-    pub user_identity: String,
-    /// Whether to verify upstream coinbase outputs against a payout address encoded in
-    /// `user_identity`.
+    /// Whether to verify upstream coinbase outputs against a payout address encoded in each
+    /// upstream `user_identity`.
     #[serde(default)]
     pub verify_payout: bool,
     /// Configuration settings for managing difficulty on the downstream connection.
@@ -74,18 +70,25 @@ pub struct Upstream {
     pub port: u16,
     /// The Secp256k1 public key used to authenticate the upstream authority.
     pub authority_pubkey: Secp256k1PublicKey,
-    #[serde(default)]
+    /// The user identity/username to use when connecting to the pool.
+    /// This will be appended with a counter for each mining channel (e.g., username.miner1,
+    /// username.miner2).
     pub user_identity: String,
 }
 
 impl Upstream {
     /// Creates a new `UpstreamConfig` instance.
-    pub fn new(address: String, port: u16, authority_pubkey: Secp256k1PublicKey) -> Self {
+    pub fn new(
+        address: String,
+        port: u16,
+        authority_pubkey: Secp256k1PublicKey,
+        user_identity: String,
+    ) -> Self {
         Self {
             address,
             port,
             authority_pubkey,
-            user_identity: String::new(),
+            user_identity,
         }
     }
 }
@@ -102,7 +105,6 @@ impl TranslatorConfig {
         max_supported_version: u16,
         min_supported_version: u16,
         downstream_extranonce2_size: u16,
-        user_identity: String,
         verify_payout: bool,
         aggregate_channels: bool,
         supported_extensions: Vec<u16>,
@@ -117,7 +119,6 @@ impl TranslatorConfig {
             max_supported_version,
             min_supported_version,
             downstream_extranonce2_size,
-            user_identity,
             verify_payout,
             downstream_difficulty_config,
             aggregate_channels,
@@ -141,21 +142,22 @@ impl TranslatorConfig {
 
     pub(crate) fn expected_payout_distribution(
         &self,
+        user_identity: &str,
     ) -> Result<Option<PayoutMode>, PayoutModeError> {
         if !self.verify_payout {
             return Ok(None);
         }
 
-        match PayoutMode::try_from(self.user_identity.as_str()) {
+        match PayoutMode::try_from(user_identity) {
             Ok(payout_mode @ (PayoutMode::Solo { .. } | PayoutMode::Donate { .. })) => {
                 Ok(Some(payout_mode))
             }
             Ok(PayoutMode::FullDonation) => Err(PayoutModeError::MissingMinerPayout {
-                user_identity: self.user_identity.clone(),
+                user_identity: user_identity.to_string(),
                 mode: MissingMinerPayoutMode::FullDonation,
             }),
             Err(PayoutModeError::NoPayoutMode(_)) => Err(PayoutModeError::MissingMinerPayout {
-                user_identity: self.user_identity.clone(),
+                user_identity: user_identity.to_string(),
                 mode: MissingMinerPayoutMode::NoPayoutMode,
             }),
             Err(e) => Err(e),
@@ -216,7 +218,7 @@ mod tests {
         // Use a valid base58-encoded public key from the key-utils test cases
         let pubkey_str = "9bDuixKmZqAJnrmP746n8zU1wyAQRrus7th9dxnkPg6RzQvCnan";
         let pubkey = Secp256k1PublicKey::from_str(pubkey_str).unwrap();
-        Upstream::new("127.0.0.1".to_string(), 4444, pubkey)
+        Upstream::new("127.0.0.1".to_string(), 4444, pubkey, "IT_TEST".to_string())
     }
 
     fn create_test_difficulty_config() -> DownstreamDifficultyConfig {
@@ -251,7 +253,6 @@ mod tests {
             2,
             1,
             4,
-            "test_user".to_string(),
             false,
             true,
             vec![],
@@ -266,7 +267,6 @@ mod tests {
         assert_eq!(config.max_supported_version, 2);
         assert_eq!(config.min_supported_version, 1);
         assert_eq!(config.downstream_extranonce2_size, 4);
-        assert_eq!(config.user_identity, "test_user");
         assert!(!config.verify_payout);
         assert!(config.aggregate_channels);
         assert!(config.supported_extensions.is_empty());
@@ -288,7 +288,6 @@ mod tests {
             2,
             1,
             4,
-            payout_address.to_string(),
             false,
             true,
             vec![],
@@ -298,7 +297,7 @@ mod tests {
         );
 
         assert!(disabled_config
-            .expected_payout_distribution()
+            .expected_payout_distribution(payout_address)
             .unwrap()
             .is_none());
 
@@ -310,7 +309,6 @@ mod tests {
             2,
             1,
             4,
-            payout_address.to_string(),
             true,
             true,
             vec![],
@@ -320,7 +318,9 @@ mod tests {
         );
 
         assert!(matches!(
-            enabled_config.expected_payout_distribution().unwrap(),
+            enabled_config
+                .expected_payout_distribution(payout_address)
+                .unwrap(),
             Some(PayoutMode::Solo { .. })
         ));
     }
@@ -335,7 +335,6 @@ mod tests {
             2,
             1,
             4,
-            "sri/donate/worker".to_string(),
             true,
             true,
             vec![],
@@ -345,18 +344,19 @@ mod tests {
         );
 
         assert!(matches!(
-            config.expected_payout_distribution().unwrap_err(),
+            config
+                .expected_payout_distribution("sri/donate/worker")
+                .unwrap_err(),
             PayoutModeError::MissingMinerPayout {
                 mode: MissingMinerPayoutMode::FullDonation,
                 ..
             }
         ));
 
-        let mut config = config;
-        config.user_identity = "invalid_address.worker".to_string();
-
         assert!(matches!(
-            config.expected_payout_distribution().unwrap_err(),
+            config
+                .expected_payout_distribution("invalid_address.worker")
+                .unwrap_err(),
             PayoutModeError::MissingMinerPayout {
                 mode: MissingMinerPayoutMode::NoPayoutMode,
                 ..
@@ -374,7 +374,6 @@ mod tests {
             2,
             1,
             4,
-            "bc1q_typo.worker".to_string(),
             true,
             true,
             vec![],
@@ -384,7 +383,9 @@ mod tests {
         );
 
         assert!(matches!(
-            config.expected_payout_distribution().unwrap_err(),
+            config
+                .expected_payout_distribution("bc1q_typo.worker")
+                .unwrap_err(),
             PayoutModeError::MissingMinerPayout {
                 mode: MissingMinerPayoutMode::NoPayoutMode,
                 ..
@@ -405,7 +406,6 @@ mod tests {
             2,
             1,
             4,
-            "test_user".to_string(),
             false,
             false,
             vec![],
@@ -442,7 +442,6 @@ mod tests {
             2,
             1,
             4,
-            "test_user".to_string(),
             false,
             true,
             vec![],
@@ -472,7 +471,6 @@ mod tests {
             2,
             1,
             4,
-            "test_user".to_string(),
             false,
             false,
             vec![],
@@ -498,14 +496,13 @@ mod tests {
     }
 
     #[test]
-    fn test_upstream_user_identity_toml_absent() {
+    fn test_upstream_user_identity_toml_absent_is_rejected() {
         let toml = r#"
             address = "127.0.0.1"
             port = 4444
             authority_pubkey = "9bDuixKmZqAJnrmP746n8zU1wyAQRrus7th9dxnkPg6RzQvCnan"
         "#;
-        let upstream: Upstream = toml::from_str(toml).unwrap();
-        assert_eq!(upstream.user_identity, "");
+        assert!(toml::from_str::<Upstream>(toml).is_err());
     }
 
     #[test]
@@ -521,7 +518,7 @@ mod tests {
     }
 
     #[test]
-    fn test_multi_upstream_mixed_identity_toml() {
+    fn test_multi_upstream_identity_toml() {
         let pubkey = "9bDuixKmZqAJnrmP746n8zU1wyAQRrus7th9dxnkPg6RzQvCnan";
         let toml = format!(
             r#"
@@ -530,7 +527,6 @@ mod tests {
             max_supported_version = 2
             min_supported_version = 2
             downstream_extranonce2_size = 8
-            user_identity = "global_identity"
             aggregate_channels = false
 
             [downstream_difficulty_config]
@@ -549,11 +545,12 @@ mod tests {
             address = "192.168.1.1"
             port = 3333
             authority_pubkey = "{pubkey}"
+            user_identity = "bc1qbackup.worker"
             "#
         );
         let config: TranslatorConfig = toml::from_str(&toml).unwrap();
         assert_eq!(config.upstreams.len(), 2);
         assert_eq!(config.upstreams[0].user_identity, "sri/solo/bc1qprimary");
-        assert_eq!(config.upstreams[1].user_identity, "");
+        assert_eq!(config.upstreams[1].user_identity, "bc1qbackup.worker");
     }
 }

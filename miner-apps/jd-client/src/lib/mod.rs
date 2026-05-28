@@ -69,10 +69,7 @@ impl JobDeclaratorClient {
 
     /// Starts the Job Declarator Client (JDC) main loop.
     pub async fn start(&self) {
-        info!(
-            "Job declarator client starting... setting up subsystems, User Identity: {}",
-            self.config.user_identity()
-        );
+        info!("Job declarator client starting... setting up subsystems");
 
         let miner_coinbase_outputs = vec![self.config.get_txout()];
         let mut encoded_outputs = vec![];
@@ -302,20 +299,6 @@ impl JobDeclaratorClient {
             })
             .collect();
 
-        let has_any_per_upstream = upstream_addresses
-            .iter()
-            .any(|u| !u.user_identity.is_empty());
-        let has_missing = upstream_addresses
-            .iter()
-            .any(|u| u.user_identity.is_empty());
-        if has_any_per_upstream && has_missing {
-            warn!(
-                "Some upstream entries have `user_identity` set and some do not. \
-                 Upstreams without a per-upstream identity will use the global `user_identity`, \
-                 which may be rejected by pools expecting a different identity format."
-            );
-        }
-
         channel_manager
             .clone()
             .start(
@@ -357,8 +340,8 @@ impl JobDeclaratorClient {
                 )
                 .await
             {
-                Ok((upstream, job_declarator, upstream_index)) => {
-                    initial_channel_manager.set_upstream_index(upstream_index);
+                Ok((upstream, job_declarator, user_identity)) => {
+                    initial_channel_manager.set_user_identity(user_identity);
 
                     upstream
                         .start(
@@ -502,8 +485,8 @@ impl JobDeclaratorClient {
                         )
                         .await
                     {
-                        Ok((upstream, job_declarator, upstream_index)) => {
-                            channel_manager.set_upstream_index(upstream_index);
+                        Ok((upstream, job_declarator, user_identity)) => {
+                            channel_manager.set_user_identity(user_identity);
 
                             upstream
                                 .start(
@@ -698,7 +681,7 @@ impl JobDeclaratorClient {
         fallback_coordinator: FallbackCoordinator,
         mode: JDMode,
         task_manager: Arc<TaskManager>,
-    ) -> Result<(Upstream, JobDeclarator, usize), JDCErrorKind> {
+    ) -> Result<(Upstream, JobDeclarator, String), JDCErrorKind> {
         const MAX_RETRIES: usize = 3;
         let upstream_len = upstreams.len();
         for (i, upstream_entry) in upstreams.iter_mut().enumerate() {
@@ -754,7 +737,7 @@ impl JobDeclaratorClient {
                 {
                     Ok((upstream, jd)) => {
                         upstream_entry.tried_or_flagged = true;
-                        return Ok((upstream, jd, i));
+                        return Ok((upstream, jd, upstream_entry.user_identity.clone()));
                     }
                     Err(e) => {
                         tracing::error!("Upstream and JDS connection terminated");

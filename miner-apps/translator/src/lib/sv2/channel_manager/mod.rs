@@ -8,7 +8,7 @@ use crate::{
 };
 use async_channel::{Receiver, Sender};
 use dashmap::DashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use stratum_apps::{
     channel_utils::ReceiverCleanup,
     custom_mutex::Mutex,
@@ -166,7 +166,7 @@ pub struct ChannelManager {
     /// being established, or connected.
     pub aggregated_channel_state: AtomicAggregatedState,
     /// Expected coinbase payout distribution derived from `user_identity`.
-    pub(crate) expected_payout_distribution: Option<PayoutMode>,
+    expected_payout_distribution: Arc<OnceLock<Option<PayoutMode>>>,
     /// Current mode Tproxy is operating in.
     pub(crate) mode: TproxyMode,
     /// Required to show or not show hashrate on monitoring.
@@ -187,6 +187,18 @@ impl ChannelManager {
             .super_safe_lock(|allocator| *allocator = None);
         self.aggregated_channel_state
             .set(AggregatedState::NoChannel);
+    }
+
+    fn expected_payout_distribution(&self) -> &Option<PayoutMode> {
+        self.expected_payout_distribution
+            .get()
+            .expect("payout mode should be set")
+    }
+
+    pub(crate) fn set_expected_payout_distribution(&self, payout_mode: Option<PayoutMode>) {
+        self.expected_payout_distribution
+            .set(payout_mode)
+            .expect("paymode should be set only once");
     }
 
     fn handle_error_action(
@@ -270,7 +282,6 @@ impl ChannelManager {
         sv1_server_receiver: Receiver<(Mining<'static>, Option<Vec<Tlv>>)>,
         supported_extensions: Vec<u16>,
         required_extensions: Vec<u16>,
-        expected_payout_distribution: Option<PayoutMode>,
         tproxy_mode: TproxyMode,
         #[cfg(feature = "monitoring")] report_hashrate: bool,
     ) -> Self {
@@ -292,7 +303,7 @@ impl ChannelManager {
             negotiated_extensions: Arc::new(Mutex::new(Vec::new())),
             aggregated_extranonce_allocator: Arc::new(Mutex::new(None)),
             aggregated_channel_state: AtomicAggregatedState::new(AggregatedState::NoChannel),
-            expected_payout_distribution,
+            expected_payout_distribution: Arc::new(OnceLock::new()),
             mode: tproxy_mode,
             #[cfg(feature = "monitoring")]
             report_hashrate,
@@ -1019,7 +1030,6 @@ mod tests {
             sv1_server_receiver,
             vec![],
             vec![],
-            None,
             TproxyMode::from(true),
             #[cfg(feature = "monitoring")]
             true,

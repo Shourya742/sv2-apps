@@ -208,10 +208,12 @@ pub fn start_jdc(
     enable_monitoring: bool,
     jdc_mode: Option<ConfigJDCMode>,
 ) -> (JobDeclaratorClient, SocketAddr, Option<SocketAddr>) {
-    let pool_with_ids: Vec<_> = pool.iter().map(|&(p, j)| (p, j, None)).collect();
+    let pool_with_ids: Vec<_> = pool
+        .iter()
+        .map(|&(p, j)| (p, j, "IT_TEST".to_string()))
+        .collect();
     start_jdc_with_identities(
         &pool_with_ids,
-        "IT-test",
         template_provider_config,
         supported_extensions,
         required_extensions,
@@ -221,8 +223,7 @@ pub fn start_jdc(
 }
 
 pub fn start_jdc_with_identities(
-    pool: &[(SocketAddr, SocketAddr, Option<String>)], // (pool_address, jds_address, per_upstream_id)
-    global_identity: &str,
+    pool: &[(SocketAddr, SocketAddr, String)], // (pool_address, jds_address, per_upstream_id)
     template_provider_config: TemplateProviderType,
     supported_extensions: Vec<u16>,
     required_extensions: Vec<u16>,
@@ -248,15 +249,14 @@ pub fn start_jdc_with_identities(
     let upstreams = pool
         .iter()
         .map(|(pool_addr, jds_addr, per_upstream_id)| {
-            let mut upstream = Upstream::new(
+            Upstream::new(
                 authority_pubkey,
                 pool_addr.ip().to_string(),
                 pool_addr.port(),
                 jds_addr.ip().to_string(),
                 jds_addr.port(),
-            );
-            upstream.user_identity = per_upstream_id.clone().unwrap_or_default();
-            upstream
+                per_upstream_id.clone(),
+            )
         })
         .collect();
     let pool_config = PoolConfig::new(authority_public_key, authority_secret_key);
@@ -270,7 +270,6 @@ pub fn start_jdc_with_identities(
     let jd_client_proxy = JobDeclaratorClientConfig::new(
         jdc_address,
         protocol_config,
-        global_identity.to_string(),
         10.0,
         1,
         pool_config,
@@ -362,11 +361,12 @@ pub async fn start_sv2_translator(
     job_keepalive_interval_secs: Option<u16>,
     enable_monitoring: bool,
 ) -> (TranslatorSv2, SocketAddr, Option<SocketAddr>) {
-    let upstreams: Vec<(SocketAddr, Option<String>)> =
-        upstreams.iter().map(|&addr| (addr, None)).collect();
+    let upstreams: Vec<(SocketAddr, String)> = upstreams
+        .iter()
+        .map(|&addr| (addr, "user_identity".to_string()))
+        .collect();
     start_sv2_translator_with_identities(
         &upstreams,
-        "user_identity",
         aggregate_channels,
         supported_extensions,
         required_extensions,
@@ -377,8 +377,7 @@ pub async fn start_sv2_translator(
 }
 
 pub async fn start_sv2_translator_with_identities(
-    upstreams: &[(SocketAddr, Option<String>)],
-    global_identity: &str,
+    upstreams: &[(SocketAddr, String)],
     aggregate_channels: bool,
     supported_extensions: Vec<u16>,
     required_extensions: Vec<u16>,
@@ -394,13 +393,12 @@ pub async fn start_sv2_translator_with_identities(
     let upstreams = upstreams
         .iter()
         .map(|(addr, per_upstream_id)| {
-            let mut upstream = translator_sv2::config::Upstream::new(
+            translator_sv2::config::Upstream::new(
                 addr.ip().to_string(),
                 addr.port(),
                 upstream_authority_pubkey,
-            );
-            upstream.user_identity = per_upstream_id.clone().unwrap_or_default();
-            upstream
+                per_upstream_id.clone(),
+            )
         })
         .collect();
 
@@ -433,7 +431,6 @@ pub async fn start_sv2_translator_with_identities(
         2,
         2,
         4,
-        global_identity.to_string(),
         false,
         aggregate_channels,
         supported_extensions,
@@ -475,6 +472,7 @@ pub async fn start_sv2_translator_with_user_identity(
                 upstream_address,
                 upstream_port,
                 upstream_authority_pubkey,
+                user_identity.clone(),
             )
         })
         .collect();
@@ -510,7 +508,6 @@ pub async fn start_sv2_translator_with_user_identity(
         2,
         2,
         downstream_extranonce2_size,
-        user_identity,
         verify_payout,
         aggregate_channels,
         supported_extensions,

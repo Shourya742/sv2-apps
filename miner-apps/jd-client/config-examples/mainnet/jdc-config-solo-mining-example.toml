@@ -15,9 +15,6 @@ authority_public_key = "9auqWEzQDVyd2oe1JVGFLMLHZtCo2FFqZwtKA5gd9xbuEu7PH72"
 authority_secret_key = "mkDLTBBRxdBv998612qipDYoTK3YUrqLe8uWw7gu3iXbSrn2n"
 cert_validity_sec = 3600
 
-# User identity/username
-user_identity = "solo_miner"
-
 # How many shares we expect to receive in a minute (determines difficulty targets)
 shares_per_minute = 6.0
 

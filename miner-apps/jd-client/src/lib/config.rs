@@ -39,8 +39,6 @@ pub struct JobDeclaratorClientConfig {
     /// The path to the log file where JDC will write logs.
     #[serde(default, deserialize_with = "opt_path_from_toml")]
     log_file: Option<PathBuf>,
-    /// User Identity
-    user_identity: String,
     /// Shares per minute
     shares_per_minute: SharesPerMinute,
     /// share batch size
@@ -81,7 +79,6 @@ impl JobDeclaratorClientConfig {
     pub fn new(
         listening_address: SocketAddr,
         protocol_config: ProtocolConfig,
-        user_identity: String,
         shares_per_minute: SharesPerMinute,
         shares_batch_size: SharesBatchSize,
         pool_config: PoolConfig,
@@ -108,7 +105,6 @@ impl JobDeclaratorClientConfig {
             coinbase_reward_script: protocol_config.coinbase_reward_script,
             jdc_signature,
             log_file: None,
-            user_identity,
             shares_per_minute,
             share_batch_size: shares_batch_size,
             mode: jdc_mode.unwrap_or_default(),
@@ -193,9 +189,6 @@ impl JobDeclaratorClientConfig {
         if let Some(log_file) = log_file {
             self.log_file = Some(log_file);
         }
-    }
-    pub fn user_identity(&self) -> &str {
-        &self.user_identity
     }
 
     pub fn shares_per_minute(&self) -> SharesPerMinute {
@@ -307,7 +300,6 @@ pub struct Upstream {
     // The network address of the JDS.
     pub jds_address: String,
     pub jds_port: u16,
-    #[serde(default)]
     pub user_identity: String,
 }
 
@@ -319,6 +311,7 @@ impl Upstream {
         pool_port: u16,
         jds_address: String,
         jds_port: u16,
+        user_identity: String,
     ) -> Self {
         Self {
             authority_pubkey,
@@ -326,7 +319,7 @@ impl Upstream {
             pool_port,
             jds_address,
             jds_port,
-            user_identity: String::new(),
+            user_identity,
         }
     }
 }
@@ -354,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    fn test_upstream_user_identity_toml_absent() {
+    fn test_upstream_user_identity_toml_absent_is_rejected() {
         let toml = format!(
             r#"
             authority_pubkey = "{TEST_PUBKEY}"
@@ -364,8 +357,7 @@ mod tests {
             jds_port = 3334
             "#
         );
-        let upstream: Upstream = toml::from_str(&toml).unwrap();
-        assert_eq!(upstream.user_identity, "");
+        assert!(toml::from_str::<Upstream>(&toml).is_err());
     }
 
     #[test]

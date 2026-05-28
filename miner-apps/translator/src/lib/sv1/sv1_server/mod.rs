@@ -127,7 +127,7 @@ pub struct Sv1Server {
     /// case of channels aggregation (aggregated mode)
     pub(crate) valid_sv1_jobs: Arc<DashMap<ChannelId, Vec<server_to_client::Notify<'static>>>>,
     pub(crate) mode: TproxyMode,
-    active_user_identity: OnceLock<usize>,
+    user_identity: Arc<OnceLock<String>>,
 }
 
 #[cfg_attr(not(test), hotpath::measure_all)]
@@ -294,14 +294,20 @@ impl Sv1Server {
             pending_target_updates: Arc::new(Mutex::new(Vec::new())),
             valid_sv1_jobs: Arc::new(DashMap::new()),
             mode,
-            active_user_identity: OnceLock::new(),
+            user_identity: Arc::new(OnceLock::new()),
         }
     }
 
-    pub fn set_upstream_index(&self, index: usize) {
-        self.active_user_identity
-            .set(index)
-            .expect("upstream index already set");
+    pub fn set_user_identity(&self, user_identity: String) {
+        self.user_identity
+            .set(user_identity)
+            .expect("user identity already set");
+    }
+
+    fn user_identity(&self) -> &String {
+        self.user_identity
+            .get()
+            .expect("user identity should exist")
     }
 
     /// Starts the SV1 server and begins accepting connections.
@@ -953,22 +959,14 @@ impl Sv1Server {
         };
 
         let miner_id = self.miner_counter.fetch_add(1, Ordering::SeqCst) + 1;
-        let index = *self
-            .active_user_identity
-            .get()
-            .expect("upstream index not set");
-        let upstream_identity = &self.config.upstreams[index].user_identity;
-        let per_upstream = !upstream_identity.is_empty();
-        let base_identity = if per_upstream {
-            upstream_identity.clone()
+        let user_identity = self.user_identity();
+        // SRI patterns use `/`-delimited segments for payout mode parsing, so appending
+        // a suffix would break pool-side validation.
+        // See: https://github.com/stratum-mining/sv2-apps/issues/369
+        let user_identity = if user_identity.starts_with("sri/") {
+            user_identity.clone()
         } else {
-            self.config.user_identity.clone()
-        };
-        // per_upstream: identity sent as-is; sri/ prefix also forbids .minerN — sv2-apps#369
-        let user_identity = if per_upstream || base_identity.starts_with("sri/") {
-            base_identity
-        } else {
-            format!("{}.miner{}", base_identity, miner_id)
+            format!("{}.miner{}", user_identity, miner_id)
         };
 
         downstream
@@ -1464,7 +1462,12 @@ mod tests {
         let pubkey_str = "9bDuixKmZqAJnrmP746n8zU1wyAQRrus7th9dxnkPg6RzQvCnan";
         let pubkey = Secp256k1PublicKey::from_str(pubkey_str).unwrap();
 
-        let upstream = Upstream::new("127.0.0.1".to_string(), 4444, pubkey);
+        let upstream = Upstream::new(
+            "127.0.0.1".to_string(),
+            4444,
+            pubkey,
+            "test_user".to_string(),
+        );
         let difficulty_config = DownstreamDifficultyConfig::new(100.0, 5.0, true, 60);
 
         TranslatorConfig::new(
@@ -1475,13 +1478,12 @@ mod tests {
             2,                     // max_supported_version
             1,                     // min_supported_version
             4,                     // downstream_extranonce2_size
-            "test_user".to_string(),
-            false,  // verify_payout
-            true,   // aggregate_channels
-            vec![], // supported_extensions
-            vec![], // required_extensions
-            None,   // monitoring_address
-            None,   // monitoring_cache_refresh_secs
+            false,                 // verify_payout
+            true,                  // aggregate_channels
+            vec![],                // supported_extensions
+            vec![],                // required_extensions
+            None,                  // monitoring_address
+            None,                  // monitoring_cache_refresh_secs
         )
     }
 
@@ -1501,7 +1503,6 @@ mod tests {
         assert_eq!(server.shares_per_minute, 5.0);
         assert_eq!(server.listener_addr.ip().to_string(), "127.0.0.1");
         assert_eq!(server.listener_addr.port(), 3333);
-        assert_eq!(server.config.user_identity, "test_user");
     }
 
     #[test]
@@ -1605,22 +1606,5 @@ mod tests {
         let seq_id = server.sequence_counter.fetch_add(1, Ordering::SeqCst);
         assert_eq!(seq_id, 1);
         assert_eq!(server.sequence_counter.load(Ordering::SeqCst), 2);
-    }
-
-    #[test]
-    fn test_set_upstream_index() {
-        let server = create_test_sv1_server();
-        assert!(server.active_user_identity.get().is_none());
-
-        server.set_upstream_index(0);
-        assert_eq!(*server.active_user_identity.get().unwrap(), 0);
-    }
-
-    #[test]
-    fn test_set_upstream_index_visible_in_clone() {
-        let server = create_test_sv1_server();
-        server.set_upstream_index(0);
-        let clone = server.clone();
-        assert_eq!(*clone.active_user_identity.get().unwrap(), 0);
     }
 }

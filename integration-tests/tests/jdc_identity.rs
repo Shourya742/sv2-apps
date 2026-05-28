@@ -1,7 +1,10 @@
-use integration_tests_sv2::mock_roles::{MockUpstream, WithSetup};
 use integration_tests_sv2::{
-    interceptor::MessageDirection, start_jdc_with_identities, template_provider::DifficultyLevel,
-    utils::get_available_address, *,
+    interceptor::MessageDirection,
+    mock_roles::{MockUpstream, WithSetup},
+    start_jdc_with_identities,
+    template_provider::DifficultyLevel,
+    utils::get_available_address,
+    *,
 };
 use stratum_apps::stratum_core::{
     common_messages_sv2::{SetupConnectionSuccess, MESSAGE_TYPE_SETUP_CONNECTION},
@@ -33,9 +36,8 @@ async fn jdc_sends_per_upstream_identity() {
         &[(
             pool_sniffer_addr,
             jds_addr,
-            Some(PER_UPSTREAM_IDENTITY.to_string()),
+            PER_UPSTREAM_IDENTITY.to_string(),
         )],
-        "global_identity",
         sv2_tp_config(tp_addr),
         vec![],
         vec![],
@@ -114,15 +116,14 @@ async fn jdc_per_upstream_identity_switches_on_fallback() {
             (
                 primary_pool_addr,
                 primary_jds_sniffer_addr,
-                Some(PRIMARY_IDENTITY.to_string()),
+                PRIMARY_IDENTITY.to_string(),
             ),
             (
                 fallback_pool_addr,
                 fallback_jds_sniffer_addr,
-                Some(FALLBACK_IDENTITY.to_string()),
+                FALLBACK_IDENTITY.to_string(),
             ),
         ],
-        "global_identity",
         sv2_tp_config(tp_addr),
         vec![],
         vec![],

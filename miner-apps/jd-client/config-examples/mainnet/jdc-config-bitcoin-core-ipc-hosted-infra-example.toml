@@ -10,10 +10,6 @@ authority_public_key = "9auqWEzQDVyd2oe1JVGFLMLHZtCo2FFqZwtKA5gd9xbuEu7PH72"
 authority_secret_key = "mkDLTBBRxdBv998612qipDYoTK3YUrqLe8uWw7gu3iXbSrn2n"
 cert_validity_sec = 3600
 
-
-# User identity/username for pool connection
-user_identity = "your_username_here"
-
 # How many shares we expect to receive in a minute (determines difficulty targets)
 shares_per_minute = 6.0
 
@@ -65,6 +61,7 @@ pool_address = "75.119.150.111"
 pool_port = 3333
 jds_address = "75.119.150.111"
 jds_port = 3334
+user_identity = "your_primary_username_here"
  
 # [[upstreams]]
 # authority_pubkey = "2di19GHYQnAZJmEpoUeP7C3Eg9TCcksHr23rZCC83dvUiZgiDL"
@@ -72,6 +69,7 @@ jds_port = 3334
 # pool_port = "34254"
 # jds_address = "127.0.0.1:34264"
 # jds_port = "34264"
+# user_identity = "your_backup_username_here"
 
 # Bitcoin Core IPC config
 # Supported networks: mainnet, testnet4, signet, regtest
