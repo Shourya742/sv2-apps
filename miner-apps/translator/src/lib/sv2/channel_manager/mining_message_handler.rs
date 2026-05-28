@@ -547,7 +547,7 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
         _tlv_fields: Option<&[Tlv]>,
     ) -> Result<(), Self::Error> {
         info!("Received: {}", m);
-        if let Some(expected_payout_distribution) = &self.expected_payout_distribution {
+        if let Some(expected_payout_distribution) = self.expected_payout_distribution() {
             expected_payout_distribution
                 .validate_coinbase_tx_suffix(m.coinbase_tx_suffix.inner_as_ref())
                 .map_err(|e| {

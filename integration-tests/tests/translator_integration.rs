@@ -2,6 +2,7 @@
 use integration_tests_sv2::{
     interceptor::{IgnoreMessage, MessageDirection, ReplaceMessage},
     mock_roles::{MockUpstream, WithSetup},
+    start_sv2_translator_with_identities,
     sv1_sniffer::SV1MessageFilter,
     template_provider::DifficultyLevel,
     utils::get_available_address,
@@ -2382,4 +2383,159 @@ async fn test_translator_fallback_during_abrupt_disconnection() {
         )
         .await;
     shutdown_all!(translator, pool_2);
+}
+
+#[tokio::test]
+async fn tproxy_sends_per_upstream_identity() {
+    start_tracing();
+
+    let mock_upstream_addr = get_available_address();
+    let mock_upstream = MockUpstream::new(mock_upstream_addr, WithSetup::no());
+    let send_to_tproxy = mock_upstream.start().await;
+
+    let (sniffer, sniffer_addr) = start_sniffer("", mock_upstream_addr, false, vec![], None);
+
+    const PER_UPSTREAM_IDENTITY: &str = "bc1qtest.worker";
+
+    let (translator, tproxy_addr, _) = start_sv2_translator_with_identities(
+        &[(sniffer_addr, PER_UPSTREAM_IDENTITY.to_string())],
+        false,
+        vec![],
+        vec![],
+        None,
+        false,
+    )
+    .await;
+
+    sniffer
+        .wait_for_message_type_and_clean_queue(
+            MessageDirection::ToUpstream,
+            MESSAGE_TYPE_SETUP_CONNECTION,
+        )
+        .await;
+
+    send_to_tproxy
+        .send(AnyMessage::Common(CommonMessages::SetupConnectionSuccess(
+            SetupConnectionSuccess {
+                used_version: 2,
+                flags: 0,
+            },
+        )))
+        .await
+        .unwrap();
+
+    let (_minerd, _) = start_minerd(tproxy_addr, None, None, false).await;
+
+    sniffer
+        .wait_for_message_type(
+            MessageDirection::ToUpstream,
+            MESSAGE_TYPE_OPEN_EXTENDED_MINING_CHANNEL,
+        )
+        .await;
+
+    let oemc = loop {
+        match sniffer.next_message_from_downstream() {
+            Some((_, AnyMessage::Mining(parsers_sv2::Mining::OpenExtendedMiningChannel(msg)))) => {
+                break msg
+            }
+            _ => continue,
+        }
+    };
+
+    let identity_str =
+        std::str::from_utf8(oemc.user_identity.as_ref()).expect("user_identity is not valid UTF-8");
+    assert_eq!(
+        identity_str, PER_UPSTREAM_IDENTITY,
+        "expected per-upstream identity '{PER_UPSTREAM_IDENTITY}', got '{identity_str}'"
+    );
+
+    shutdown_all!(translator);
+}
+
+#[tokio::test]
+async fn tproxy_per_upstream_identity_switches_on_fallback() {
+    start_tracing();
+
+    let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
+    let (pool_1, pool_addr_1, _) = start_pool(sv2_tp_config(tp_addr), vec![], vec![], false).await;
+    let (pool_2, pool_addr_2, _) = start_pool(sv2_tp_config(tp_addr), vec![], vec![], false).await;
+
+    const PRIMARY_IDENTITY: &str = "sri/solo/bc1qprimary";
+    const FALLBACK_IDENTITY: &str = "bc1qfallback.worker";
+
+    let setup_err = ReplaceMessage::new(
+        MessageDirection::ToDownstream,
+        MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS,
+        AnyMessage::Common(parsers_sv2::CommonMessages::SetupConnectionError(
+            SetupConnectionError {
+                flags: 0,
+                error_code: "test-identity-fallback".to_string().try_into().unwrap(),
+            },
+        )),
+    );
+
+    let (sniffer_1, sniffer_addr_1) =
+        start_sniffer("primary", pool_addr_1, false, vec![setup_err.into()], None);
+    let (sniffer_2, sniffer_addr_2) = start_sniffer("fallback", pool_addr_2, false, vec![], None);
+
+    let (translator, tproxy_addr, _) = start_sv2_translator_with_identities(
+        &[
+            (sniffer_addr_1, PRIMARY_IDENTITY.to_string()),
+            (sniffer_addr_2, FALLBACK_IDENTITY.to_string()),
+        ],
+        false,
+        vec![],
+        vec![],
+        None,
+        false,
+    )
+    .await;
+
+    let (_minerd, _) = start_minerd(tproxy_addr, None, None, false).await;
+
+    // Primary must fail.
+    sniffer_1
+        .wait_for_message_type(MessageDirection::ToUpstream, MESSAGE_TYPE_SETUP_CONNECTION)
+        .await;
+    sniffer_1
+        .wait_for_message_type(
+            MessageDirection::ToDownstream,
+            MESSAGE_TYPE_SETUP_CONNECTION_ERROR,
+        )
+        .await;
+
+    // Fallback connects and opens a channel.
+    sniffer_2
+        .wait_for_message_type(MessageDirection::ToUpstream, MESSAGE_TYPE_SETUP_CONNECTION)
+        .await;
+    sniffer_2
+        .wait_for_message_type(
+            MessageDirection::ToDownstream,
+            MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS,
+        )
+        .await;
+    sniffer_2
+        .wait_for_message_type(
+            MessageDirection::ToUpstream,
+            MESSAGE_TYPE_OPEN_EXTENDED_MINING_CHANNEL,
+        )
+        .await;
+
+    let oemc = loop {
+        match sniffer_2.next_message_from_downstream() {
+            Some((_, AnyMessage::Mining(parsers_sv2::Mining::OpenExtendedMiningChannel(msg)))) => {
+                break msg
+            }
+            _ => continue,
+        }
+    };
+
+    let identity_str =
+        std::str::from_utf8(oemc.user_identity.as_ref()).expect("user_identity is not valid UTF-8");
+    assert_eq!(
+        identity_str, FALLBACK_IDENTITY,
+        "expected fallback pool identity '{FALLBACK_IDENTITY}', got '{identity_str}'"
+    );
+
+    shutdown_all!(translator, pool_2, pool_1);
 }

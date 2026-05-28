@@ -58,6 +58,7 @@ pub struct UpstreamEntry {
     pub jds_port: u16,
     pub authority_pubkey: Secp256k1PublicKey,
     pub tried_or_flagged: bool,
+    pub user_identity: String,
 }
 
 /// Constructs a `SetupConnection` message for the mining protocol.

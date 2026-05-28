@@ -170,6 +170,8 @@ pub enum TproxyErrorKind {
     SetDifficultyToMessage(SetDifficulty),
     /// Received an unexpected message type
     UnexpectedMessage(ExtensionType, MessageType),
+    /// Invalid user identity
+    InvalidUserIdentity(String),
     /// Job not found during share validation
     JobNotFound,
     /// Invalid merkle root during share validation
@@ -241,6 +243,9 @@ impl fmt::Display for TproxyErrorKind {
                     f,
                     "Received a message type that was not expected: {extension_type}, {message_type}"
                 )
+            }
+            InvalidUserIdentity(user_identity) => {
+                write!(f, "Invalid user identity: {user_identity}")
             }
             JobNotFound => write!(f, "Job not found during share validation"),
             InvalidMerkleRoot => write!(f, "Invalid merkle root during share validation"),

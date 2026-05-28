@@ -22,6 +22,7 @@ use std::{
 };
 use stratum_apps::{
     fallback_coordinator::FallbackCoordinator,
+    payout::PayoutMode,
     task_manager::TaskManager,
     utils::types::{Sv2Frame, GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS},
 };
@@ -75,6 +76,24 @@ impl TranslatorSv2 {
         }
     }
 
+    fn payout_mode(&self, user_identity: &str) -> Result<Option<PayoutMode>, TproxyErrorKind> {
+        let expected_payout_distribution = self
+            .config
+            .expected_payout_distribution(user_identity)
+            .map_err(|e| {
+                TproxyErrorKind::InvalidUserIdentity(format!(
+                    "invalid payout user_identity `{user_identity}`: {e}"
+                ))
+            })?;
+        if let Some(distribution) = &expected_payout_distribution {
+            info!(
+                "Payout verification enabled for configured user_identity: {}",
+                distribution
+            );
+        }
+        Ok(expected_payout_distribution)
+    }
+
     /// Starts the translator.
     ///
     /// This method starts the main event loop, which handles connections,
@@ -85,21 +104,6 @@ impl TranslatorSv2 {
         let cancellation_token = self.cancellation_token.clone();
         let mut fallback_coordinator = FallbackCoordinator::new();
         let tproxy_mode = TproxyMode::from(self.config.aggregate_channels);
-        let expected_payout_distribution = match self.config.expected_payout_distribution() {
-            Ok(distribution) => distribution,
-            Err(e) => {
-                error!("Invalid payout user_identity configuration: {e}");
-                self.shutdown_notify.notify_waiters();
-                self.is_alive.store(false, Ordering::Relaxed);
-                return;
-            }
-        };
-        if let Some(distribution) = &expected_payout_distribution {
-            info!(
-                "Payout verification enabled for configured user_identity: {}",
-                distribution
-            );
-        }
 
         let task_manager = Arc::new(TaskManager::new());
 
@@ -123,6 +127,7 @@ impl TranslatorSv2 {
                 port: u.port,
                 authority_pubkey: u.authority_pubkey,
                 tried_or_flagged: false,
+                user_identity: u.user_identity.clone(),
             })
             .collect::<Vec<_>>();
 
@@ -141,6 +146,18 @@ impl TranslatorSv2 {
 
         info!("Initializing upstream connection...");
 
+        let mut channel_manager: Arc<ChannelManager> = Arc::new(ChannelManager::new(
+            channel_manager_to_upstream_sender,
+            upstream_to_channel_manager_receiver,
+            channel_manager_to_sv1_server_sender.clone(),
+            sv1_server_to_channel_manager_receiver,
+            self.config.supported_extensions.clone(),
+            self.config.required_extensions.clone(),
+            tproxy_mode,
+            #[cfg(feature = "monitoring")]
+            self.config.downstream_difficulty_config.enable_vardiff,
+        ));
+
         if let Err(e) = self
             .initialize_upstream(
                 &mut upstream_addresses,
@@ -151,6 +168,7 @@ impl TranslatorSv2 {
                 task_manager.clone(),
                 sv1_server.clone(),
                 self.config.required_extensions.clone(),
+                channel_manager.clone(),
             )
             .await
         {
@@ -159,19 +177,6 @@ impl TranslatorSv2 {
             self.is_alive.store(false, Ordering::Relaxed);
             return;
         }
-
-        let mut channel_manager: Arc<ChannelManager> = Arc::new(ChannelManager::new(
-            channel_manager_to_upstream_sender,
-            upstream_to_channel_manager_receiver,
-            channel_manager_to_sv1_server_sender.clone(),
-            sv1_server_to_channel_manager_receiver,
-            self.config.supported_extensions.clone(),
-            self.config.required_extensions.clone(),
-            expected_payout_distribution.clone(),
-            tproxy_mode,
-            #[cfg(feature = "monitoring")]
-            self.config.downstream_difficulty_config.enable_vardiff,
-        ));
 
         info!("Launching ChannelManager tasks...");
         ChannelManager::run_channel_manager_tasks(
@@ -273,6 +278,18 @@ impl TranslatorSv2 {
                                     tproxy_mode
                                 ));
 
+                                channel_manager = Arc::new(ChannelManager::new(
+                                    channel_manager_to_upstream_sender,
+                                    upstream_to_channel_manager_receiver,
+                                    channel_manager_to_sv1_server_sender,
+                                    sv1_server_to_channel_manager_receiver,
+                                    self.config.supported_extensions.clone(),
+                                    self.config.required_extensions.clone(),
+                                    tproxy_mode,
+                                    #[cfg(feature = "monitoring")]
+                                    self.config.downstream_difficulty_config.enable_vardiff,
+                                ));
+
                                 if let Err(e) = self.initialize_upstream(
                                     &mut upstream_addresses,
                                     channel_manager_to_upstream_receiver,
@@ -282,24 +299,14 @@ impl TranslatorSv2 {
                                     task_manager.clone(),
                                     sv1_server.clone(),
                                     self.config.required_extensions.clone(),
-                                ).await {
+                                    channel_manager.clone(),
+                                )
+                                .await
+                                {
                                     error!("Couldn't perform fallback, shutting system down: {e:?}");
                                     cancellation_token.cancel();
                                     break;
                                 }
-
-                                channel_manager = Arc::new(ChannelManager::new(
-                                    channel_manager_to_upstream_sender,
-                                    upstream_to_channel_manager_receiver,
-                                    channel_manager_to_sv1_server_sender,
-                                    sv1_server_to_channel_manager_receiver,
-                                    self.config.supported_extensions.clone(),
-                                    self.config.required_extensions.clone(),
-                                    expected_payout_distribution.clone(),
-                                    tproxy_mode,
-                                    #[cfg(feature = "monitoring")]
-                                    self.config.downstream_difficulty_config.enable_vardiff
-                                ));
 
                                 info!("Launching ChannelManager tasks...");
                                 ChannelManager::run_channel_manager_tasks(
@@ -430,6 +437,7 @@ impl TranslatorSv2 {
         task_manager: Arc<TaskManager>,
         sv1_server_instance: Arc<Sv1Server>,
         required_extensions: Vec<u16>,
+        channel_manager_instance: Arc<ChannelManager>,
     ) -> Result<(), TproxyErrorKind> {
         const MAX_RETRIES: usize = 3;
         let upstream_len = upstreams.len();
@@ -466,6 +474,12 @@ impl TranslatorSv2 {
                 .await
                 {
                     Ok(()) => {
+                        let user_identity = upstream_entry.user_identity.to_string();
+                        let payout_mode = self.payout_mode(&user_identity)?;
+
+                        channel_manager_instance.set_expected_payout_distribution(payout_mode);
+                        sv1_server_instance.set_user_identity(user_identity);
+
                         // starting sv1 server instance
                         if let Err(e) = sv1_server_instance
                             .clone()

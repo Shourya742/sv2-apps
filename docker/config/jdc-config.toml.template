@@ -10,10 +10,6 @@ authority_public_key = "9auqWEzQDVyd2oe1JVGFLMLHZtCo2FFqZwtKA5gd9xbuEu7PH72"
 authority_secret_key = "mkDLTBBRxdBv998612qipDYoTK3YUrqLe8uWw7gu3iXbSrn2n"
 cert_validity_sec = 3600
 
-
-# User identity/username for pool connection
-user_identity = "${JDC_USER_IDENTITY}"
-
 # How many shares we expect to receive in a minute (determines difficulty targets)
 shares_per_minute = ${JDC_SHARES_PER_MINUTE}
 
@@ -61,6 +57,7 @@ pool_address = "${JDC_POOL_ADDRESS}"
 pool_port = "${JDC_POOL_PORT}"
 jds_address = "${JDC_UPSTREAM_JDS_ADDRESS}"
 jds_port = "${JDC_UPSTREAM_JDS_PORT}"
+user_identity = "${JDC_USER_IDENTITY}"
 
 # Bitcoin Core IPC config
 [template_provider_type.BitcoinCoreIpc]

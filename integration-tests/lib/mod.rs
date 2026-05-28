@@ -208,10 +208,30 @@ pub fn start_jdc(
     enable_monitoring: bool,
     jdc_mode: Option<ConfigJDCMode>,
 ) -> (JobDeclaratorClient, SocketAddr, Option<SocketAddr>) {
+    let pool_with_ids: Vec<_> = pool
+        .iter()
+        .map(|&(p, j)| (p, j, "IT_TEST".to_string()))
+        .collect();
+    start_jdc_with_identities(
+        &pool_with_ids,
+        template_provider_config,
+        supported_extensions,
+        required_extensions,
+        enable_monitoring,
+        jdc_mode,
+    )
+}
+
+pub fn start_jdc_with_identities(
+    pool: &[(SocketAddr, SocketAddr, String)], // (pool_address, jds_address, per_upstream_id)
+    template_provider_config: TemplateProviderType,
+    supported_extensions: Vec<u16>,
+    required_extensions: Vec<u16>,
+    enable_monitoring: bool,
+    jdc_mode: Option<ConfigJDCMode>,
+) -> (JobDeclaratorClient, SocketAddr, Option<SocketAddr>) {
     use jd_client_sv2::config::{JobDeclaratorClientConfig, PoolConfig, ProtocolConfig, Upstream};
     let jdc_address = get_available_address();
-    let max_supported_version = 2;
-    let min_supported_version = 2;
     let authority_public_key = Secp256k1PublicKey::try_from(
         "9auqWEzQDVyd2oe1JVGFLMLHZtCo2FFqZwtKA5gd9xbuEu7PH72".to_string(),
     )
@@ -228,26 +248,19 @@ pub fn start_jdc(
     .unwrap();
     let upstreams = pool
         .iter()
-        .map(|(pool_addr, jds_addr)| {
+        .map(|(pool_addr, jds_addr, per_upstream_id)| {
             Upstream::new(
                 authority_pubkey,
                 pool_addr.ip().to_string(),
                 pool_addr.port(),
                 jds_addr.ip().to_string(),
                 jds_addr.port(),
+                per_upstream_id.clone(),
             )
         })
         .collect();
     let pool_config = PoolConfig::new(authority_public_key, authority_secret_key);
-    let protocol_config = ProtocolConfig::new(
-        max_supported_version,
-        min_supported_version,
-        coinbase_reward_script,
-    );
-    let shares_per_minute = 10.0;
-    let shares_batch_size = 1;
-    let user_identity = "IT-test".to_string();
-    let jdc_signature = "JDC".to_string();
+    let protocol_config = ProtocolConfig::new(2, 2, coinbase_reward_script);
     let monitoring_address = if enable_monitoring {
         Some(get_available_address())
     } else {
@@ -257,14 +270,13 @@ pub fn start_jdc(
     let jd_client_proxy = JobDeclaratorClientConfig::new(
         jdc_address,
         protocol_config,
-        user_identity,
-        shares_per_minute,
-        shares_batch_size,
+        10.0,
+        1,
         pool_config,
         3600,
         template_provider_config,
         upstreams,
-        jdc_signature,
+        "JDC".to_string(),
         jdc_mode,
         supported_extensions,
         required_extensions,
@@ -349,17 +361,89 @@ pub async fn start_sv2_translator(
     job_keepalive_interval_secs: Option<u16>,
     enable_monitoring: bool,
 ) -> (TranslatorSv2, SocketAddr, Option<SocketAddr>) {
-    start_sv2_translator_with_user_identity(
-        upstreams,
+    let upstreams: Vec<(SocketAddr, String)> = upstreams
+        .iter()
+        .map(|&addr| (addr, "user_identity".to_string()))
+        .collect();
+    start_sv2_translator_with_identities(
+        &upstreams,
         aggregate_channels,
         supported_extensions,
         required_extensions,
         job_keepalive_interval_secs,
-        "user_identity".to_string(),
-        false,
         enable_monitoring,
     )
     .await
+}
+
+pub async fn start_sv2_translator_with_identities(
+    upstreams: &[(SocketAddr, String)],
+    aggregate_channels: bool,
+    supported_extensions: Vec<u16>,
+    required_extensions: Vec<u16>,
+    job_keepalive_interval_secs: Option<u16>,
+    enable_monitoring: bool,
+) -> (TranslatorSv2, SocketAddr, Option<SocketAddr>) {
+    let job_keepalive_interval_secs = job_keepalive_interval_secs.unwrap_or(60);
+    let upstream_authority_pubkey = Secp256k1PublicKey::try_from(
+        "9auqWEzQDVyd2oe1JVGFLMLHZtCo2FFqZwtKA5gd9xbuEu7PH72".to_string(),
+    )
+    .expect("failed to parse test authority pubkey");
+
+    let upstreams = upstreams
+        .iter()
+        .map(|(addr, per_upstream_id)| {
+            translator_sv2::config::Upstream::new(
+                addr.ip().to_string(),
+                addr.port(),
+                upstream_authority_pubkey,
+                per_upstream_id.clone(),
+            )
+        })
+        .collect();
+
+    let listening_address = get_available_address();
+    let listening_port = listening_address.port();
+
+    let minerd_process = MinerdProcess::new(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)), false)
+        .await
+        .unwrap();
+    let min_individual_miner_hashrate = minerd_process.measure_hashrate().await.unwrap() as f32;
+
+    let downstream_difficulty_config = translator_sv2::config::DownstreamDifficultyConfig::new(
+        min_individual_miner_hashrate,
+        SHARES_PER_MINUTE,
+        true,
+        job_keepalive_interval_secs,
+    );
+
+    let monitoring_address = if enable_monitoring {
+        Some(get_available_address())
+    } else {
+        None
+    };
+    let monitoring_cache_refresh_secs = if enable_monitoring { Some(1) } else { None };
+    let config = translator_sv2::config::TranslatorConfig::new(
+        upstreams,
+        listening_address.ip().to_string(),
+        listening_port,
+        downstream_difficulty_config,
+        2,
+        2,
+        4,
+        false,
+        aggregate_channels,
+        supported_extensions,
+        required_extensions,
+        monitoring_address,
+        monitoring_cache_refresh_secs,
+    );
+    let translator_v2 = translator_sv2::TranslatorSv2::new(config);
+    let clone_translator_v2 = translator_v2.clone();
+    tokio::spawn(async move {
+        clone_translator_v2.start().await;
+    });
+    (translator_v2, listening_address, monitoring_address)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -388,6 +472,7 @@ pub async fn start_sv2_translator_with_user_identity(
                 upstream_address,
                 upstream_port,
                 upstream_authority_pubkey,
+                user_identity.clone(),
             )
         })
         .collect();
@@ -423,7 +508,6 @@ pub async fn start_sv2_translator_with_user_identity(
         2,
         2,
         downstream_extranonce2_size,
-        user_identity,
         verify_payout,
         aggregate_channels,
         supported_extensions,

@@ -69,10 +69,7 @@ impl JobDeclaratorClient {
 
     /// Starts the Job Declarator Client (JDC) main loop.
     pub async fn start(&self) {
-        info!(
-            "Job declarator client starting... setting up subsystems, User Identity: {}",
-            self.config.user_identity()
-        );
+        info!("Job declarator client starting... setting up subsystems");
 
         let miner_coinbase_outputs = vec![self.config.get_txout()];
         let mut encoded_outputs = vec![];
@@ -298,6 +295,7 @@ impl JobDeclaratorClient {
                 jds_port: u.jds_port,
                 authority_pubkey: u.authority_pubkey,
                 tried_or_flagged: false,
+                user_identity: u.user_identity.clone(),
             })
             .collect();
 
@@ -342,7 +340,9 @@ impl JobDeclaratorClient {
                 )
                 .await
             {
-                Ok((upstream, job_declarator)) => {
+                Ok((upstream, job_declarator, user_identity)) => {
+                    initial_channel_manager.set_user_identity(user_identity);
+
                     upstream
                         .start(
                             self.config.min_supported_version(),
@@ -485,7 +485,9 @@ impl JobDeclaratorClient {
                         )
                         .await
                     {
-                        Ok((upstream, job_declarator)) => {
+                        Ok((upstream, job_declarator, user_identity)) => {
+                            channel_manager.set_user_identity(user_identity);
+
                             upstream
                                 .start(
                                     self.config.min_supported_version(),
@@ -679,7 +681,7 @@ impl JobDeclaratorClient {
         fallback_coordinator: FallbackCoordinator,
         mode: JDMode,
         task_manager: Arc<TaskManager>,
-    ) -> Result<(Upstream, JobDeclarator), JDCErrorKind> {
+    ) -> Result<(Upstream, JobDeclarator, String), JDCErrorKind> {
         const MAX_RETRIES: usize = 3;
         let upstream_len = upstreams.len();
         for (i, upstream_entry) in upstreams.iter_mut().enumerate() {
@@ -733,9 +735,9 @@ impl JobDeclaratorClient {
                 )
                 .await
                 {
-                    Ok(pair) => {
+                    Ok((upstream, jd)) => {
                         upstream_entry.tried_or_flagged = true;
-                        return Ok(pair);
+                        return Ok((upstream, jd, upstream_entry.user_identity.clone()));
                     }
                     Err(e) => {
                         tracing::error!("Upstream and JDS connection terminated");

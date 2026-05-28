@@ -27,6 +27,9 @@ bitcoin_core_sv2 = { version = "0.3.0", path = "../../bitcoin-core-sv2" }
 hex = "0.4.3"
 hotpath = "0.14.0"
 
+[dev-dependencies]
+toml = "0.8"
+
 [features]
 default = ["monitoring"]
 monitoring = ["stratum-apps/monitoring"]

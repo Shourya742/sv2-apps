@@ -10,10 +10,6 @@ authority_public_key = "9auqWEzQDVyd2oe1JVGFLMLHZtCo2FFqZwtKA5gd9xbuEu7PH72"
 authority_secret_key = "mkDLTBBRxdBv998612qipDYoTK3YUrqLe8uWw7gu3iXbSrn2n"
 cert_validity_sec = 3600
 
-
-# User identity/username for pool connection
-user_identity = "your_username_here"
-
 # How many shares we expect to receive in a minute (determines difficulty targets)
 shares_per_minute = 6.0
 
@@ -65,6 +61,7 @@ pool_address = "127.0.0.1"
 pool_port = 33333
 jds_address = "127.0.0.1"
 jds_port = 33334
+user_identity = "your_primary_username_here"
 
 [[upstreams]]
 authority_pubkey = "9auqWEzQDVyd2oe1JVGFLMLHZtCo2FFqZwtKA5gd9xbuEu7PH72"
@@ -72,6 +69,7 @@ pool_address = "75.119.150.111"
 pool_port = 33333
 jds_address = "75.119.150.111"
 jds_port = 33334
+user_identity = "your_backup_username_here"
 
 # Local Sv2 Template Provider config
 [template_provider_type.Sv2Tp]

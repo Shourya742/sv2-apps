@@ -165,7 +165,7 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
                     .expect("prefix length already validated by allocator");
                 let mut extended_channel = ExtendedChannel::new(
                     msg.channel_id,
-                    self.user_identity.clone(),
+                    self.user_identity().to_string(),
                     extranonce_prefix,
                     Target::from_le_bytes(msg.target.inner_as_ref().try_into().unwrap()),
                     hashrate,
