@@ -161,7 +161,23 @@ pub fn spawn_io_tasks(
                             match res {
                                 Ok(frame) => {
                                     trace!("Sending outbound frame");
-                                    if let Err(e) = writer.write_frame(frame.into()).await {
+                                    // Cancellation is acceptable here because fallback/shutdown
+                                    // drops this connection instead of reusing the Noise state.
+                                    let write_result = tokio::select! {
+                                        biased;
+                                        _ = cancellation_token.cancelled() => {
+                                            trace!("Received shutdown signal during write");
+                                            inbound_tx_clone.close();
+                                            break;
+                                        }
+                                        _ = fallback.cancelled(), if fallback.is_enabled() => {
+                                            trace!("Received fallback signal during write");
+                                            inbound_tx_clone.close();
+                                            break;
+                                        }
+                                        result = writer.write_frame(frame.into()) => result,
+                                    };
+                                    if let Err(e) = write_result {
                                         error!(error=?e, "Writer error");
                                         outbound_rx.close_and_drain();
                                         break;
