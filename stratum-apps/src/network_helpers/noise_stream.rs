@@ -14,7 +14,7 @@ use std::time::Duration;
 use crate::network_helpers::Error;
 use stratum_core::{
     codec_sv2::{
-        Decrypted, EncodableFrame, Handshake, NoiseDecoder, NoiseEncoder, Transport,
+        Decoded, Decrypted, EncodableFrame, Handshake, NoiseDecoder, NoiseEncoder, Transport,
         TransportDecryptState, TransportEncryptState,
         state::{ExpectsHandshakeMessage, InitiatorSent},
     },
@@ -342,8 +342,8 @@ async fn receive_handshake_frame<R: ExpectsHandshakeMessage>(
         decoder.writable().copy_from_slice(&buffer);
 
         match decoder.next_handshake_frame::<R>() {
-            Ok(frame) => return Ok(frame),
-            Err(stratum_core::codec_sv2::Error::MissingBytes(_)) => {
+            Ok(Decoded::Frame(frame)) => return Ok(frame),
+            Ok(Decoded::Incomplete(_)) => {
                 debug!("Waiting for more bytes during handshake");
             }
             Err(e) => return Err(Error::CodecError(e)),
