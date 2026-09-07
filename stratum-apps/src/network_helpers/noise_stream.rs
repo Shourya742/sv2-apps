@@ -14,11 +14,11 @@ use std::time::Duration;
 use crate::network_helpers::Error;
 use stratum_core::{
     codec_sv2::{
-        EncodableFrame, Handshake, NoiseDecoder, NoiseEncoder, Transport, TransportDecryptState,
-        TransportEncryptState,
+        Decrypted, EncodableFrame, Handshake, NoiseDecoder, NoiseEncoder, Transport,
+        TransportDecryptState, TransportEncryptState,
         state::{ExpectsHandshakeMessage, InitiatorSent},
     },
-    noise_sv2::{INITIATOR_EXPECTED_HANDSHAKE_MESSAGE_SIZE, Initiator, Responder},
+    noise_sv2::{AeadError, INITIATOR_EXPECTED_HANDSHAKE_MESSAGE_SIZE, Initiator, Responder},
 };
 use tokio::net::{
     TcpStream,
@@ -54,7 +54,7 @@ pub struct NoiseTcpStream {
 pub struct NoiseTcpReadHalf {
     reader: OwnedReadHalf,
     decoder: NoiseDecoder,
-    state: TransportDecryptState,
+    state: Option<TransportDecryptState>,
     current_frame_buf: Vec<u8>,
     bytes_read: usize,
 }
@@ -156,7 +156,7 @@ impl NoiseTcpStream {
             reader: NoiseTcpReadHalf {
                 reader,
                 decoder,
-                state: decrypt_state,
+                state: Some(decrypt_state),
                 current_frame_buf: vec![],
                 bytes_read: 0,
             },
@@ -221,7 +221,7 @@ impl NoiseTcpReadHalf {
     /// Reads and decodes a complete frame from the socket.
     ///
     /// This method blocks until a full frame is read and decoded,
-    /// handling `MissingBytes` errors from the codec automatically.
+    /// handling `Incomplete` rounds from the codec automatically.
     ///
     /// Not cancellation-safe: Cancellation may leave partially-read state behind.
     pub async fn read_frame(&mut self) -> Result<StandardSerializedFrame, Error> {
@@ -253,13 +253,9 @@ impl NoiseTcpReadHalf {
 
             self.bytes_read = 0;
 
-            match self.decoder.next_transport_frame(&mut self.state) {
-                Ok(frame) => return Ok(frame),
-                Err(stratum_core::codec_sv2::Error::MissingBytes(_)) => {
-                    tokio::task::yield_now().await;
-                    continue;
-                }
-                Err(e) => return Err(Error::CodecError(e)),
+            match self.next_frame()? {
+                Some(frame) => return Ok(frame),
+                None => tokio::task::yield_now().await,
             }
         }
     }
@@ -298,10 +294,23 @@ impl NoiseTcpReadHalf {
 
         self.bytes_read = 0;
 
-        match self.decoder.next_transport_frame(&mut self.state) {
-            Ok(frame) => Ok(Some(frame)),
-            Err(stratum_core::codec_sv2::Error::MissingBytes(_)) => Ok(None),
-            Err(e) => Err(Error::CodecError(e)),
+        self.next_frame()
+    }
+
+    fn next_frame(&mut self) -> Result<Option<StandardSerializedFrame>, Error> {
+        let state = self
+            .state
+            .take()
+            .ok_or(stratum_core::codec_sv2::Error::AeadError(AeadError))?;
+        match self.decoder.next_transport_frame(state)? {
+            Decrypted::Frame(frame, state) => {
+                self.state = Some(state);
+                Ok(Some(frame))
+            }
+            Decrypted::Incomplete(_, state) => {
+                self.state = Some(state);
+                Ok(None)
+            }
         }
     }
 }
